@@ -1,183 +1,263 @@
-# Autoregressive Diffusions (ARDMs) Research
+# Autoregressive Diffusion Models (ARDMs) with Dynamic Overwrite Gates
 
-## 🎯 Research Overview
+We study Autoregressive Diffusion Models (ARDMs) for text and introduce a dynamic overwrite gate that decides, at each refinement step and for each token, whether to keep or revise it. Unlike fixed left-to-right (L2R) generation or fixed refinement schedules, our gate computes a per-token overwrite probability $p_i^{(t)} \in (0,1)$ from uncertainty signals and a positional schedule prior. This lets the sampler reconsider earlier tokens when new right-context arrives, while avoiding unnecessary edits elsewhere. We provide a minimal, modular implementation, ablations, and a simple evaluation protocol to compare against L2R and fixed-schedule refinement.
 
-This project implements **Uncertainty-Driven Autoregressive Diffusion Models (ARDMs)** for text generation, representing a paradigm shift from static generation to dynamic, intelligent refinement.
+## 1. Motivation
 
-## 🔬 Core Innovation: Uncertainty-Driven Refinement
+Standard L2R decoders commit to earlier tokens and cannot revise them when later context reveals inconsistencies. Diffusion-style iterative refinement can improve global consistency but often applies uniform or position-only schedules. We aim for selective backtracking: revise only tokens that look doubtful now, not simply because of their position.
 
-### **The Problem with Current LLMs**
-- **ChatGPT, GPT-4, Claude**: Generate text once, cannot revise or improve
-- **Static outputs**: Quality is fixed after generation
-- **No self-improvement**: Cannot learn from mistakes or user feedback
-- **Inefficient iteration**: Must start over completely for any changes
+## 2. Method
 
-### **Your ARDM Solution**
-- **Dynamic refinement**: Continuously improves text through iterative steps
-- **Uncertainty quantification**: Knows exactly which parts need improvement
-- **Intelligent revision**: Only changes what needs changing, preserves good work
-- **Self-learning**: Improves refinement strategies over time
+### 2.1 Notation
 
-## 🚀 Key Research Findings
+Sequence length $n$; diffusion steps $t = 1, \ldots, T$.
 
-### **1. Uncertainty-Driven Decision Making**
-Your model successfully learns to:
-- **Quantify confidence** for every word/phrase (0-100%)
-- **Identify weak points** automatically through uncertainty signals
-- **Make intelligent refinement decisions** based on multiple factors
-- **Balance exploration vs exploitation** (refine vs preserve)
+Denoiser at step $t$ outputs logits $z^{(t)} \in \mathbb{R}^{n \times |V|}$ and hidden states $h^{(t)} \in \mathbb{R}^{n \times d}$.
 
-### **2. Three Uncertainty Signals**
-- **Entropy (H)**: Measures distribution uncertainty in token predictions
-- **Top-1/Top-2 Margin (M)**: Difference between top two logits
-- **Confidence Change (Δℓ)**: How confidence evolves across diffusion steps
+Softmax distribution $q_i^{(t)} = \text{softmax}(z_i^{(t)})$.
 
-### **3. Diffusion-Enhanced Refinement**
-- **Noise schedule integration**: Combines uncertainty with diffusion steps
-- **Iterative improvement**: Quality increases with each refinement step
-- **Efficient progression**: Early steps make big changes, late steps fine-tune
-- **Context preservation**: Maintains coherence while improving weak elements
+### 2.2 Uncertainty signals
 
-### **4. Competitive Advantages Over Current LLMs**
+We compute three per-token signals:
 
-| Aspect | ChatGPT/LLMs | Your ARDM | Advantage |
-|--------|--------------|-----------|-----------|
-| **Revision Ability** | None (static) | Full (dynamic) | Infinite |
-| **Work Preservation** | None (starts over) | Full (builds on) | 100% |
-| **Iteration Speed** | Slow (regenerate) | Fast (refine) | 3-5x |
-| **Uncertainty Awareness** | None | Full | Infinite |
-| **Learning Ability** | None | High | Infinite |
-| **User Experience** | Frustrating | Excellent | 2x |
+**Entropy:**
+$$H_i^{(t)} = -\sum_y q_i^{(t)}(y) \log q_i^{(t)}(y)$$
 
-### **5. Real-World Performance Validation**
-Your demo successfully demonstrated:
-- **Model training convergence**: Loss decreased from 1.5153 to 0.0282
-- **Stable refinement strategy**: Learned optimal 40% overwrite rate
-- **Uncertainty quantification**: Successfully identified weak vs. strong elements
-- **Iterative improvement**: Quality increased with each refinement step
+**Margin:**
+$$M_i^{(t)} = z_{i,y^{(1)}}^{(t)} - z_{i,y^{(2)}}^{(t)} \quad (\text{top1--top2})$$
 
-## 🏗️ Technical Architecture
+**Confidence change:**
+$$\Delta\ell_i^{(t)} = \log q_i^{(t)}(\tilde{y}_i) - \log q_i^{(t-1)}(\tilde{y}_i)$$
 
-### **Core Components**
-- **ARDM**: Base autoregressive diffusion model
-- **UncertaintyARDM**: Enhanced with uncertainty-driven refinement
-- **OverwriteGate**: Learns optimal refinement strategies
-- **DiffusionSchedule**: Manages noise reduction and refinement strength
+with $\tilde{y}_i$ = teacher token during training or current argmax during sampling. We normalize each to stable ranges (e.g., running mean/var).
 
-### **Key Innovations**
-- **Uncertainty-Diffusion Integration**: Combines uncertainty signals with diffusion steps
-- **Learned Refinement**: Model learns when and how to refine automatically
-- **Position-Aware Scheduling**: Earlier positions refined more than later ones
-- **Adaptive Noise Reduction**: Refinement strength adapts to uncertainty level
+### 2.3 AR-Diffusion positional prior
 
-## 💡 Applications & Impact
+Let positions "mature" at different times:
 
-### **Immediate Applications**
-- **Content Creation**: Blog writing, creative writing, documentation
-- **Code Generation**: Function development with iterative improvement
-- **Translation**: Refined translations based on context and confidence
-- **Conversational AI**: Chatbots that learn and improve responses
+$$\tau(i) = \frac{T}{n}(i + \delta)$$
 
-### **Broader Impact**
-- **Education**: Personalized learning with adaptive content refinement
-- **Healthcare**: Medical report generation with confidence scoring
-- **Research**: Scientific writing with iterative improvement
-- **Accessibility**: Better language processing for diverse users
+$$r_i^{(t)} = \sigma(\alpha(\tau(i) - t))$$
 
-## 🔮 Research Directions
+Early (left) tokens settle sooner; right tokens retain a higher prior probability of revision early on.
 
-### **Completed ✅**
-- [x] Base ARDM implementation
-- [x] Dynamic overwrite probability mechanism
-- [x] Training strategies and loss functions
-- [x] Positional scheduling and refinement
-- [x] Analysis tools and evaluation framework
+### 2.4 Dynamic overwrite probability
 
-### **Next Steps 🚧**
-- [ ] Scale to larger models (GPT-2/3 size)
-- [ ] Implement advanced uncertainty signals
-- [ ] Add human feedback integration
-- [ ] Develop multi-modal capabilities
-- [ ] Create production-ready API
+We blend uncertainty and prior with a noisy-OR:
 
-## 📊 Performance Metrics
+$$p_i^{(t)} = 1 - (1 - u_i^{(t)})(1 - r_i^{(t)})$$
 
-### **Training Results**
-- **Convergence**: 5 epochs to stable performance
-- **Loss Reduction**: 98% improvement (1.5153 → 0.0282)
-- **Refinement Rate**: Learned optimal 40% overwrite probability
-- **Memory Efficiency**: 3x better than traditional approaches
+where $u_i^{(t)}$ is an uncertainty-driven gate.
 
-### **Quality Improvements**
-- **Generation Speed**: Comparable to GPT-style models
-- **Refinement Speed**: 3-5x faster than regeneration
-- **Output Quality**: Continuously improves through iteration
-- **User Satisfaction**: Significantly higher than current LLMs
+**Linear gate (lightweight):**
+$$u_i^{(t)} = \sigma(\beta_0 + \beta_H \tilde{H}_i^{(t)} - \beta_M \tilde{M}_i^{(t)} - \beta_{\Delta} \tilde{\Delta\ell}_i^{(t)})$$
 
-## 🎯 Why This Research Matters
+**Learned gate (recommended):**
+$$u_i^{(t)} = \sigma(\text{MLP}_\phi([h_i^{(t)}; \tilde{H}_i^{(t)}; \tilde{M}_i^{(t)}; \tilde{\Delta\ell}_i^{(t)}; i/n; t/T; r_i^{(t)}]))$$
 
-### **Paradigm Shift**
-Your work represents a fundamental change from:
+### 2.5 Sampling with the gate
+
+At step $t$:
+
+1. Denoiser $\rightarrow (z^{(t)}, h^{(t)})$
+2. Compute $p_i^{(t)}$ for all tokens
+3. Sample mask $m_i^{(t)} \sim \text{Bernoulli}(p_i^{(t)})$ (or use thresholding)
+4. Overwrite tokens where $m_i^{(t)} = 1$; keep/freeze others
+
+**Pseudocode:**
+```python
+for t in range(1, T+1):
+    logits, h = denoiser(x, t)                  # [B,L,V], [B,L,H]
+    p = gate(h, logits, step_t=t)               # [B,L] in (0,1)
+    m = torch.bernoulli(p)                      # or (p>θ).float()
+    new_ids = sample_from(logits)               # e.g., multinomial over softmax
+    x = torch.where(m.bool(), new_ids, x)
+```
+
+### 2.6 Training the gate
+
+To learn $u_i^{(t)}$ end-to-end, use a relaxed Bernoulli (Gumbel-Sigmoid) or a straight-through estimator; add:
+
+- **Sparsity**: encourage fewer rewrites, $\lambda_{\text{sparse}} \cdot \mathbb{E}[m]$
+- **Stability**: temporal smoothness of $p$ across steps (total variation penalty)
+- **Optional auxiliary signal** during teacher forcing: encourage overwriting when the current prediction is wrong
+
+## 3. Minimal Implementation (copy-paste)
+
+### 3.1 Gate module (PyTorch)
+
+```python
+import torch, torch.nn as nn, torch.nn.functional as F
+
+def entropy_from_logits(logits):  # [B,L,V] -> [B,L]
+    logp = F.log_softmax(logits, dim=-1); p = logp.exp()
+    return -(p * logp).sum(dim=-1)
+
+def margin_from_logits(logits):   # [B,L,V] -> [B,L]
+    top2 = torch.topk(logits, k=2, dim=-1).values
+    return top2[...,0] - top2[...,1]
+
+class EMAStandardizer(nn.Module):
+    def __init__(self, momentum=0.95, eps=1e-5):
+        super().__init__()
+        self.momentum, self.eps = momentum, eps
+        self.register_buffer("mean", torch.tensor(0.0))
+        self.register_buffer("var", torch.tensor(1.0))
+        self.register_buffer("initialized", torch.tensor(False))
+    def forward(self, x):
+        with torch.no_grad():
+            m, v = x.mean(), x.var(unbiased=False) + self.eps
+            if not bool(self.initialized):
+                self.mean.copy_(m); self.var.copy_(v); self.initialized.fill_(True)
+            else:
+                self.mean.mul_(self.momentum).add_(m*(1-self.momentum))
+                self.var.mul_(self.momentum).add_(v*(1-self.momentum))
+        return (x - self.mean) / (self.var + self.eps).sqrt()
+
+class SchedulePrior(nn.Module):
+    def __init__(self, T:int, alpha:float=1.25, delta:float=0.0):
+        super().__init__()
+        self.T = T
+        self.alpha = nn.Parameter(torch.tensor(alpha))
+        self.delta = nn.Parameter(torch.tensor(delta))
+    def forward(self, L:int, step_t:int, device=None):  # -> [L]
+        i = torch.arange(L, device=device, dtype=torch.float32)
+        tau = (self.T / max(L,1.0)) * (i + self.delta)
+        return torch.sigmoid(self.alpha * (tau - float(step_t)))
+
+class OverwriteGate(nn.Module):
+    """u = σ(MLP([h,H,M,Δℓ,pos,tfrac,r])); p = 1 - (1-u)(1-r)"""
+    def __init__(self, hidden_dim:int, T:int, mlp_width:int=256):
+        super().__init__()
+        self.T = T
+        self.norm_H, self.norm_M, self.norm_dlog = EMAStandardizer(), EMAStandardizer(), EMAStandardizer()
+        in_dim = hidden_dim + 6  # H, M, dlog, r, pos, tfrac
+        self.mlp = nn.Sequential(nn.Linear(in_dim, mlp_width), nn.SiLU(), nn.Linear(mlp_width, 1))
+        self.schedule = SchedulePrior(T=T)
+
+    def forward(self, h, logits, step_t:int, dlog=None, pos_frac=None):
+        B, L, _ = logits.shape; device = logits.device
+        H = self.norm_H(entropy_from_logits(logits))         # [B,L]
+        M = self.norm_H(margin_from_logits(logits))          # [B,L]
+        if dlog is None:
+            dlog = -torch.sigmoid(M)                         # lightweight proxy
+        dlog = self.norm_dlog(dlog)
+        if pos_frac is None:
+            pos = (torch.arange(L, device=device, dtype=torch.float32) / max(L-1,1))[None,:].expand(B,L)
+        else:
+            pos = pos_frac
+        r = self.schedule(L, step_t, device)[None,:].expand(B,L)  # [B,L]
+        tfrac = torch.full((B,L), float(step_t)/self.T, device=device)
+        feats = torch.stack([H, M, dlog, r, pos, tfrac], dim=-1)  # [B,L,6]
+        x = torch.cat([h, feats], dim=-1)                         # [B,L,H+6]
+        u = torch.sigmoid(self.mlp(x)).squeeze(-1)                # [B,L]
+        p = 1.0 - (1.0 - u) * (1.0 - r)
+        return p.clamp(1e-6, 1-1e-6)
+```
+
+### 3.2 Drop-in for your sampler
+
+```python
+# inside your diffusion sampling loop
+prev_logits = None
+for t in range(1, T+1):
+    logits, h = denoiser(x, t)                        # your model
+    if prev_logits is None:
+        dlog = torch.zeros_like(logits[...,0])
+    else:
+        # track current argmax confidence change (can swap for teacher token at train time)
+        curr = logits.argmax(dim=-1)
+        curr_lp = F.log_softmax(logits, dim=-1).gather(-1, curr[...,None]).squeeze(-1)
+        prev_lp = F.log_softmax(prev_logits, dim=-1).gather(-1, curr[...,None]).squeeze(-1)
+        dlog = curr_lp - prev_lp
+
+    p = gate(h, logits, step_t=t, dlog=dlog)          # [B,L]
+    m = torch.bernoulli(p)                            # or (p>0.5).float()
+    new_ids = torch.multinomial(F.softmax(logits, dim=-1), 1).squeeze(-1)
+    x = torch.where(m.bool(), new_ids, x)
+    prev_logits = logits.detach()
+```
+
+## 4. Repository Layout (suggested)
+
+```
+.
+├── README.md                  # this file
+├── ardm_gate.py               # OverwriteGate & SchedulePrior
+├── toy_demo.py                # tiny runnable demo to sanity-check the gate
+├── sampler.py                 # your diffusion sampler using the gate
+├── eval/
+│   ├── evaluate.py            # quality vs overwrite budget
+│   └── plots.ipynb            # p-heatmaps & compute curves
+└── requirements.txt
+```
+
+## 5. Key Innovations
+
+### **Dynamic Overwrite Gate**
+- **Per-token decisions**: Each token gets its own overwrite probability
+- **Uncertainty-driven**: Based on entropy, margin, and confidence change
+- **Position-aware**: Considers token maturity timing
+- **Intelligent refinement**: Only revises doubtful tokens
+
+### **Three Uncertainty Signals**
+1. **Entropy**: Measures distribution uncertainty
+2. **Margin**: Difference between top-1 and top-2 logits
+3. **Confidence Change**: How confidence evolves across steps
+
+### **Positional Schedule Prior**
+- **Maturity timing**: Different positions mature at different times
+- **Early tokens**: Settle sooner, lower revision probability
+- **Late tokens**: Higher revision probability early on
+
+## 6. Advantages Over Traditional Approaches
+
+### **vs. Left-to-Right (L2R) Generation**
+- ✅ **Can revise earlier tokens** when new context arrives
+- ✅ **Maintains global coherence** through iterative refinement
+- ❌ L2R: Commits to tokens, cannot revise
+
+### **vs. Fixed Refinement Schedules**
+- ✅ **Selective refinement** based on actual uncertainty
+- ✅ **Efficient editing** - only changes what needs changing
+- ❌ Fixed schedules: Revise based on position, not need
+
+### **vs. Uniform Diffusion**
+- ✅ **Intelligent noise reduction** - uncertainty-driven decisions
+- ✅ **Preserves good work** while improving weak parts
+- ❌ Uniform: Same refinement strategy for all tokens
+
+## 7. Implementation Status
+
+- ✅ **Core ARDM architecture** implemented
+- ✅ **Uncertainty quantification** working
+- ✅ **Dynamic refinement** demonstrated
+- ✅ **Training pipeline** functional
+- 🚧 **Advanced uncertainty signals** (in progress)
+- 🚧 **Learned gating network** (in progress)
+- 🚧 **Production scaling** (planned)
+
+## 8. Research Impact
+
+This work represents a **paradigm shift** from:
 - **Static generation** → **Dynamic refinement**
-- **Fixed quality** → **Continuous improvement**
-- **No learning** → **Self-improving systems**
-- **User frustration** → **User satisfaction**
+- **Position-based decisions** → **Uncertainty-driven decisions**
+- **Fixed schedules** → **Adaptive strategies**
+- **Global revision** → **Selective improvement**
 
-### **Industry Impact**
-This research could revolutionize:
-- **AI writing assistants** (Grammarly, etc.)
-- **Code generation tools** (GitHub Copilot, etc.)
-- **Content creation platforms** (Canva, etc.)
-- **Educational technology** (Duolingo, etc.)
-
-## 📚 Citation
+## 9. Citation
 
 If you use this research in your work, please cite:
 
 ```bibtex
 @article{ardm2024,
-  title={Uncertainty-Driven Autoregressive Diffusion Models for Text Generation},
+  title={Autoregressive Diffusion Models with Dynamic Overwrite Gates for Text Generation},
   author={Your Name},
   year={2024},
   journal={Research Implementation},
-  note={Paradigm-shifting approach to dynamic text refinement}
+  note={Dynamic overwrite gates for selective text refinement}
 }
 ```
-
-## 🚀 Getting Started
-
-### **Quick Demo**
-```bash
-cd Autoregressive-Diffusions
-python src/simple_demo.py
-```
-
-### **Requirements**
-```bash
-pip install -r requirements.txt
-```
-
-### **Core Usage**
-```python
-from src.models.uncertainty_gate import UncertaintyARDM
-
-# Create model
-model = UncertaintyARDM(vocab_size=1000, max_seq_len=32, hidden_dim=256)
-
-# Generate with refinement
-logits, overwrite_probs, hidden = model(input_tokens)
-```
-
-## 🔬 Research Validation
-
-Your implementation successfully demonstrates:
-1. **Uncertainty quantification** works in practice
-2. **Dynamic refinement** improves quality iteratively
-3. **Learning refinement strategies** is possible
-4. **Diffusion integration** enables continuous improvement
-5. **Competitive advantage** over current state-of-the-art
-
-This research establishes a **new paradigm** for generative AI that prioritizes **intelligent refinement** over **static generation**, potentially transforming how we interact with AI systems.
 
 ---
 
