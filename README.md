@@ -1,10 +1,21 @@
 # Autoregressive Diffusion Models (ARDMs) with Dynamic Overwrite Gates
 
-We study Autoregressive Diffusion Models (ARDMs) for text and introduce a dynamic overwrite gate that decides, at each refinement step and for each token, whether to keep or revise it. Unlike fixed left-to-right (L2R) generation or fixed refinement schedules, our gate computes a per-token overwrite probability $p_i^{(t)} \in (0,1)$ from uncertainty signals and a positional schedule prior. This lets the sampler reconsider earlier tokens when new right-context arrives, while avoiding unnecessary edits elsewhere. We provide a minimal, modular implementation, ablations, and a simple evaluation protocol to compare against L2R and fixed-schedule refinement.
+## Abstract
+
+We propose a **Dynamic Overwrite Gate** for Autoregressive Diffusion Models (ARDMs) in text generation. At each iterative refinement step, and for each token, the gate predicts the probability of overwriting the token based on **uncertainty signals** and a **positional maturity prior**. Unlike fixed left-to-right (L2R) generation—which commits to early tokens—or fixed refinement schedules that overwrite uniformly or purely by position, our method **selectively revises only uncertain tokens**. This enables **adaptive backtracking** when later context reveals inconsistencies, while preserving confident earlier decisions to improve efficiency. We present a minimal implementation, ablations, and a simple evaluation protocol comparing against L2R and fixed-schedule refinement.
 
 ## 1. Motivation
 
-Standard L2R decoders commit to earlier tokens and cannot revise them when later context reveals inconsistencies. Diffusion-style iterative refinement can improve global consistency but often applies uniform or position-only schedules. We aim for selective backtracking: revise only tokens that look doubtful now, not simply because of their position.
+Language generation involves a delicate balance between **local fluency** (making the next token look good) and **global coherence** (ensuring consistency across the sequence).
+
+**Left-to-Right (L2R) decoders** produce tokens sequentially and irrevocably—once a token is placed, it cannot be revised. This often results in early mistakes propagating forward.
+
+**Diffusion-style iterative refinement** (sampling the whole sequence multiple times) can revise earlier tokens, improving global consistency. However:
+
+- **Uniform schedules** apply the same overwrite probability to all tokens at each step—wasting computation on already-correct tokens.
+- **Position-only schedules** (as in AR-DIFFUSION) refine earlier tokens less over time, but do not incorporate actual model uncertainty.
+
+
 
 ## 2. Method
 
@@ -209,55 +220,6 @@ for t in range(1, T+1):
 - **Maturity timing**: Different positions mature at different times
 - **Early tokens**: Settle sooner, lower revision probability
 - **Late tokens**: Higher revision probability early on
-
-## 6. Advantages Over Traditional Approaches
-
-### **vs. Left-to-Right (L2R) Generation**
-- ✅ **Can revise earlier tokens** when new context arrives
-- ✅ **Maintains global coherence** through iterative refinement
-- ❌ L2R: Commits to tokens, cannot revise
-
-### **vs. Fixed Refinement Schedules**
-- ✅ **Selective refinement** based on actual uncertainty
-- ✅ **Efficient editing** - only changes what needs changing
-- ❌ Fixed schedules: Revise based on position, not need
-
-### **vs. Uniform Diffusion**
-- ✅ **Intelligent noise reduction** - uncertainty-driven decisions
-- ✅ **Preserves good work** while improving weak parts
-- ❌ Uniform: Same refinement strategy for all tokens
-
-## 7. Implementation Status
-
-- ✅ **Core ARDM architecture** implemented
-- ✅ **Uncertainty quantification** working
-- ✅ **Dynamic refinement** demonstrated
-- ✅ **Training pipeline** functional
-- 🚧 **Advanced uncertainty signals** (in progress)
-- 🚧 **Learned gating network** (in progress)
-- 🚧 **Production scaling** (planned)
-
-## 8. Research Impact
-
-This work represents a **paradigm shift** from:
-- **Static generation** → **Dynamic refinement**
-- **Position-based decisions** → **Uncertainty-driven decisions**
-- **Fixed schedules** → **Adaptive strategies**
-- **Global revision** → **Selective improvement**
-
-## 9. Citation
-
-If you use this research in your work, please cite:
-
-```bibtex
-@article{ardm2024,
-  title={Autoregressive Diffusion Models with Dynamic Overwrite Gates for Text Generation},
-  author={Your Name},
-  year={2024},
-  journal={Research Implementation},
-  note={Dynamic overwrite gates for selective text refinement}
-}
-```
 
 ---
 
