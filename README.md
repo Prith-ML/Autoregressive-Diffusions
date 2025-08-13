@@ -93,7 +93,7 @@ To learn $u_i^{(t)}$ end-to-end, use a relaxed Bernoulli (Gumbel-Sigmoid) or a s
 - **Stability**: temporal smoothness of $p$ across steps (total variation penalty)
 - **Optional auxiliary signal** during teacher forcing: encourage overwriting when the current prediction is wrong
 
-## 3. Minimal Implementation (copy-paste)
+## 3. Minimal Implementation 
 
 ### 3.1 Gate module (PyTorch)
 
