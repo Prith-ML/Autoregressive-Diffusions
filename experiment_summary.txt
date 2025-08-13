@@ -1,0 +1,22 @@
+ARDM BASELINE COMPARISON EXPERIMENT RESULTS
+==================================================
+
+Experiment Date: 2025-08-13 14:51:40
+Total Time: 1.98 seconds
+
+PERFORMANCE COMPARISON:
+------------------------------
+L2R Baseline:           0.0906s, 0.0 revisions
+Fixed Schedule:         0.2088s, 8.0 revisions
+Dynamic Gate (Ours):    0.1924s, 8.8 revisions
+
+KEY FINDINGS:
+---------------
+• L2R: Fastest generation, no revision capability
+• Fixed Schedule: Medium speed, position-based revision
+• Dynamic Gate: Smart revision based on uncertainty signals
+
+CONCLUSION:
+------------
+Your dynamic gate provides intelligent, uncertainty-driven refinement
+while maintaining competitive generation speed.
