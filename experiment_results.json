@@ -1,303 +1,254 @@
 {
   "experiment_info": {
-    "timestamp": "2025-08-13 14:51:40",
-    "total_experiment_time": 1.9795966148376465,
+    "timestamp": "2025-08-20 13:07:32",
+    "total_experiment_time": 66.46926832199097,
     "model_parameters": "UncertaintyARDM (vocab=1000, seq_len=32, hidden=256)",
     "test_prompts_count": 5
   },
   "results": {
     "l2r": {
       "times": [
-        0.09027528762817383,
-        0.08452749252319336,
-        0.08537817001342773,
-        0.10210037231445312
+        7.906345367431641,
+        6.746766567230225
       ],
       "revisions": [
-        0,
-        0,
         0,
         0
       ],
       "quality_scores": [],
+      "pred_texts": [
+        "Zully Broussard gave one of her kidneys to a stranger. Her generosity paired up with big data resulted in six patients receiving transplants.",
+        "San Jose Clash and DC United played the first ever Major League Soccer match on April 6, 1996. The match was played at the Spartan Stadium in San Jose, California."
+      ],
       "diversity_scores": [
-        1.0,
-        0.95,
-        1.0,
-        1.0
+        0.9393939393939394,
+        0.8108108108108109
       ],
       "coherence_scores": [
         1.0,
-        1.0,
-        1.0,
         1.0
       ],
-      "avg_time": 0.09057033061981201,
-      "avg_revisions": 0.0
+      "avg_time": 7.326555967330933,
+      "avg_revisions": 0.0,
+      "bleu": 6.546011586433131,
+      "rouge1": 0.3035982008995502,
+      "rouge2": 0.09090909090909091,
+      "rougeL": 0.247376311844078
     },
     "fixed_schedule": {
       "times": [
-        0.13130450248718262,
-        0.35959911346435547,
-        0.15256357192993164,
-        0.19188523292541504
+        20.463599920272827,
+        10.247999668121338
       ],
       "revisions": [
-        9,
-        8,
-        8,
-        7
+        2,
+        2
       ],
       "quality_scores": [],
+      "pred_texts": [
+        "Z                                                              ",
+        "San Jose Clash and DC United played their first ever Major Soccer match match in 1996. The game played held at Spartan Stadium Stadium in San Jose, California.ly"
+      ],
       "diversity_scores": [
-        1.0,
-        1.0,
-        1.0,
-        1.0
+        0.046875,
+        0.8235294117647058
       ],
       "coherence_scores": [
-        0.6666666666666666,
-        0.6896551724137931,
-        0.6896551724137931,
-        0.7142857142857143
+        0.5714285714285714,
+        0.5714285714285714
       ],
-      "avg_time": 0.2088381052017212,
-      "avg_revisions": 8.0
+      "avg_time": 15.355799794197083,
+      "avg_revisions": 2.0,
+      "bleu": 2.538043127669355,
+      "rouge1": 0.07017543859649124,
+      "rouge2": 0.01818181818181818,
+      "rougeL": 0.03508771929824562
     },
     "dynamic_gate": {
       "times": [
-        0.16926312446594238,
-        0.18880581855773926,
-        0.20760345458984375,
-        0.20387578010559082
+        9.207695484161377,
+        10.463590383529663
       ],
       "revisions": [
-        8,
-        9,
-        9,
-        9
+        3,
+        4
       ],
       "quality_scores": [],
+      "pred_texts": [
+        "ZZully Broussard gave one of her kidneys to a stranger. Her generosity paired up with big data resulted in transpl patients receiving transplants.",
+        "SanSan Jose Clash and DC United played the first ever Major League Soccer match on April 6, 1996. The match held in Spartan the Spartan Stadium in San Jose, California The"
+      ],
       "diversity_scores": [
-        0.95,
-        1.0,
-        1.0,
-        1.0
+        0.9090909090909091,
+        0.7837837837837838
       ],
       "coherence_scores": [
-        0.6018518518518519,
-        0.68259385665529,
-        0.627062706270627,
-        0.6603773584905661
+        0.6000000000000001,
+        0.6153846153846154
       ],
       "quality_vs_nfe_data": [
         {
           "nfe_points": [
             1,
             2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10
+            3
           ],
           "quality_points": [
-            1.0,
-            1.0,
+            0.75,
+            0.6666666666666666,
+            0.625
+          ],
+          "efficiency": 0.0,
+          "final_quality": 0.625,
+          "total_nfe": 3,
+          "quality_gain": -0.125
+        },
+        {
+          "nfe_points": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "quality_points": [
             0.6666666666666666,
             0.6,
-            0.5833333333333334,
             0.5714285714285714,
-            0.5625,
-            0.55,
-            0.5416666666666666,
-            0.5357142857142857
+            0.5555555555555556
           ],
           "efficiency": 0.0,
-          "final_quality": 0.5357142857142857,
-          "total_nfe": 10,
-          "quality_gain": -0.4642857142857143
-        },
-        {
-          "nfe_points": [
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10
-          ],
-          "quality_points": [
-            0.625,
-            0.5625,
-            0.55,
-            0.5454545454545454,
-            0.5416666666666666,
-            0.53125,
-            0.5294117647058824,
-            0.5263157894736842,
-            0.5263157894736842,
-            0.5238095238095238
-          ],
-          "efficiency": 0.0,
-          "final_quality": 0.5238095238095238,
-          "total_nfe": 10,
-          "quality_gain": -0.10119047619047616
-        },
-        {
-          "nfe_points": [
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10
-          ],
-          "quality_points": [
-            0.6666666666666666,
-            0.6,
-            0.5833333333333334,
-            0.5833333333333334,
-            0.5625,
-            0.55,
-            0.5384615384615384,
-            0.53125,
-            0.5263157894736842,
-            0.525
-          ],
-          "efficiency": 0.0,
-          "final_quality": 0.525,
-          "total_nfe": 10,
-          "quality_gain": -0.1416666666666666
-        },
-        {
-          "nfe_points": [
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10
-          ],
-          "quality_points": [
-            0.6666666666666666,
-            0.5625,
-            0.5555555555555556,
-            0.5416666666666666,
-            0.5357142857142857,
-            0.5357142857142857,
-            0.5333333333333333,
-            0.5294117647058824,
-            0.5263157894736842,
-            0.5227272727272727
-          ],
-          "efficiency": 0.0,
-          "final_quality": 0.5227272727272727,
-          "total_nfe": 10,
-          "quality_gain": -0.14393939393939392
+          "final_quality": 0.5555555555555556,
+          "total_nfe": 4,
+          "quality_gain": -0.11111111111111105
         }
       ],
       "tokens_overwritten_patterns": [
         [
-          0,
-          0,
-          2,
-          2,
-          1,
-          1,
-          1,
-          2,
-          2,
-          2
+          [
+            26
+          ],
+          [
+            0
+          ],
+          [
+            0
+          ]
         ],
         [
-          3,
-          4,
-          2,
-          1,
-          1,
-          4,
-          1,
-          2,
-          0,
-          2
-        ],
+          [
+            24,
+            25
+          ],
+          [
+            26,
+            35
+          ],
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            1
+          ]
+        ]
+      ],
+      "tokens_overwritten_counts": [
         [
-          2,
-          2,
           1,
-          0,
-          2,
-          2,
-          3,
-          3,
-          3,
+          1,
           1
         ],
         [
           2,
-          5,
-          1,
-          3,
-          2,
-          0,
-          1,
           2,
           2,
-          3
+          2
         ]
       ],
       "positional_focus_data": [
         {
-          "early_focus": 1.0,
+          "early_focus": 0.6666666666666666,
           "middle_focus": 0.0,
-          "late_focus": 0.0,
-          "total_positions_revised": 13
+          "late_focus": 0.3333333333333333,
+          "total_positions_revised": 3
         },
         {
-          "early_focus": 1.0,
+          "early_focus": 0.5,
           "middle_focus": 0.0,
-          "late_focus": 0.0,
-          "total_positions_revised": 20
-        },
-        {
-          "early_focus": 1.0,
-          "middle_focus": 0.0,
-          "late_focus": 0.0,
-          "total_positions_revised": 19
-        },
-        {
-          "early_focus": 1.0,
-          "middle_focus": 0.0,
-          "late_focus": 0.0,
-          "total_positions_revised": 21
+          "late_focus": 0.5,
+          "total_positions_revised": 8
         }
       ],
-      "avg_time": 0.19238704442977905,
-      "avg_revisions": 8.75
+      "uncertainty_scores_per_step": [
+        [
+          {
+            "entropy_mean": 1.9287331104278564,
+            "margin_mean": 4.084444999694824,
+            "confidence_change_mean": 0.0,
+            "overwrite_prob_mean": 0.0943770632147789,
+            "overwrite_prob_std": 0.010887175798416138
+          },
+          {
+            "entropy_mean": 1.9636720418930054,
+            "margin_mean": 4.159030914306641,
+            "confidence_change_mean": 0.33257460594177246,
+            "overwrite_prob_mean": 0.09438356012105942,
+            "overwrite_prob_std": 0.010907398536801338
+          },
+          {
+            "entropy_mean": 2.0394856929779053,
+            "margin_mean": 4.04224967956543,
+            "confidence_change_mean": 0.0017974864458665252,
+            "overwrite_prob_mean": 0.09418971836566925,
+            "overwrite_prob_std": 0.010523388162255287
+          }
+        ],
+        [
+          {
+            "entropy_mean": 2.160630702972412,
+            "margin_mean": 3.0707755088806152,
+            "confidence_change_mean": 0.0,
+            "overwrite_prob_mean": 0.09545709937810898,
+            "overwrite_prob_std": 0.010658451355993748
+          },
+          {
+            "entropy_mean": 2.14078688621521,
+            "margin_mean": 3.0605177879333496,
+            "confidence_change_mean": 0.21774666011333466,
+            "overwrite_prob_mean": 0.09545354545116425,
+            "overwrite_prob_std": 0.010670716874301434
+          },
+          {
+            "entropy_mean": 2.23359751701355,
+            "margin_mean": 2.930464267730713,
+            "confidence_change_mean": 0.2726634740829468,
+            "overwrite_prob_mean": 0.09528785198926926,
+            "overwrite_prob_std": 0.010265333577990532
+          },
+          {
+            "entropy_mean": 2.268512487411499,
+            "margin_mean": 2.888080596923828,
+            "confidence_change_mean": 0.0,
+            "overwrite_prob_mean": 0.08783714473247528,
+            "overwrite_prob_std": 0.003912740852683783
+          }
+        ]
+      ],
+      "avg_time": 9.83564293384552,
+      "avg_revisions": 3.5,
+      "bleu": 5.914989185154237,
+      "rouge1": 0.25865880619012527,
+      "rouge2": 0.06818181818181818,
+      "rougeL": 0.20302137067059692
     }
   },
   "summary": {
-    "l2r_avg_time": 0.09057033061981201,
-    "fixed_schedule_avg_time": 0.2088381052017212,
-    "dynamic_gate_avg_time": 0.19238704442977905,
+    "l2r_avg_time": 7.326555967330933,
+    "fixed_schedule_avg_time": 15.355799794197083,
+    "dynamic_gate_avg_time": 9.83564293384552,
     "l2r_avg_revisions": 0.0,
-    "fixed_schedule_avg_revisions": 8.0,
-    "dynamic_gate_avg_revisions": 8.75
+    "fixed_schedule_avg_revisions": 2.0,
+    "dynamic_gate_avg_revisions": 3.5
   }
 }

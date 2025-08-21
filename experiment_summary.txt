@@ -1,14 +1,14 @@
 ARDM BASELINE COMPARISON EXPERIMENT RESULTS
 ==================================================
 
-Experiment Date: 2025-08-13 14:51:40
-Total Time: 1.98 seconds
+Experiment Date: 2025-08-20 13:07:32
+Total Time: 66.47 seconds
 
 PERFORMANCE COMPARISON:
 ------------------------------
-L2R Baseline:           0.0906s, 0.0 revisions
-Fixed Schedule:         0.2088s, 8.0 revisions
-Dynamic Gate (Ours):    0.1924s, 8.8 revisions
+L2R Baseline:           7.3266s, 0.0 revisions
+Fixed Schedule:         15.3558s, 2.0 revisions
+Dynamic Gate (Ours):    9.8356s, 3.5 revisions
 
 KEY FINDINGS:
 ---------------

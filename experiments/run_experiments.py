@@ -2,19 +2,20 @@ import sys
 sys.path.append('src')
 
 import torch
-from models.uncertainty_gate import UncertaintyARDM
+from models.uncertainty_gate import UncertaintyARDM, BARTWithOverwriteGate
 from baselines import run_baseline_comparison, print_comparison_results
+from datasets import load_dataset
 import json
 import time
 
-def create_test_model():
+def create_test_model(vocab_size: int = 1000, max_seq_len: int = 32, hidden_dim: int = 256):
     """Create a test model for the experiments"""
     print("🔧 Creating test model...")
     
     model = UncertaintyARDM(
-        vocab_size=1000,
-        max_seq_len=32,
-        hidden_dim=256
+        vocab_size=vocab_size,
+        max_seq_len=max_seq_len,
+        hidden_dim=hidden_dim
     )
     
     print(f"✅ Model created with {sum(p.numel() for p in model.parameters()):,} parameters")
@@ -25,24 +26,57 @@ def run_experiment_suite():
     print("🚀 ARDM BASELINE COMPARISON EXPERIMENT SUITE")
     print("=" * 60)
     
-    # Create model
-    model = create_test_model()
+    # Load a real dataset and tokenizer (small slice for demo)
+    print("\n📚 Loading dataset + tokenizer (CNN/DailyMail subset)...")
+    try:
+        dataset = load_dataset('cnn_dailymail', '3.0.0', split='validation[:16]')
+        try:
+            from transformers import AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained('facebook/bart-large-cnn')
+        except Exception as te:
+            print(f"⚠️ Tokenizer load failed (transformers issue): {te}. Proceeding without tokenizer.")
+            tokenizer = None
+        # Use articles as sources and highlights as references
+        text_prompts = [str(x['article']) for x in dataset.select(range(2))]
+        references = [str(x['highlights']) for x in dataset.select(range(2))]
+        print(f"✅ Loaded {len(text_prompts)} article prompts with references from CNN/DailyMail")
+    except Exception as e:
+        print(f"⚠️ Dataset/tokenizer load failed: {e}. Falling back to toy prompts.")
+        tokenizer = None
+        text_prompts = [
+            "The detective walked down",
+            "She was investigating a",
+            "The mystery deepened with",
+            "Inside the old house there",
+            "Finally the truth was"
+        ]
+        references = None
+
+    # Create model with appropriate vocab size
+    # Prefer pretrained seq2seq denoiser + overwrite gate for meaningful logits
+    try:
+        from transformers import AutoTokenizer as _check
+        model = BARTWithOverwriteGate('facebook/bart-large-cnn')
+        print("✅ Using BARTWithOverwriteGate as denoiser")
+    except Exception as e:
+        print(f"⚠️ Falling back to UncertaintyARDM due to: {e}")
+        vocab_size = tokenizer.vocab_size if tokenizer is not None and hasattr(tokenizer, 'vocab_size') else 1000
+        model = create_test_model(vocab_size=vocab_size, max_seq_len=128, hidden_dim=256)
     
-    # Test prompts for the experiment
-    test_prompts = [
-        "The detective walked down",
-        "She was investigating a",
-        "The mystery deepened with",
-        "Inside the old house there",
-        "Finally the truth was"
-    ]
-    
-    print(f"\n📝 Running experiments with {len(test_prompts)} test prompts")
+    print(f"\n📝 Running experiments with {len(text_prompts)} test prompts")
     print("=" * 60)
     
     # Run baseline comparison
     start_time = time.time()
-    results = run_baseline_comparison(model, None, max_length=20)
+    results = run_baseline_comparison(
+        model,
+        None,
+        max_length=64,
+        tokenizer=tokenizer,
+        text_prompts=text_prompts,
+        prompt_max_tokens=64,
+        references=references
+    )
     total_experiment_time = time.time() - start_time
     
     # Print results

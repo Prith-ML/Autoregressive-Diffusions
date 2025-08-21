@@ -292,7 +292,12 @@ def create_summary_dashboard(results):
     ax2 = fig.add_subplot(gs[0, 2:])
     if 'tokens_overwritten_patterns' in results['results']['dynamic_gate']:
         pattern = results['results']['dynamic_gate']['tokens_overwritten_patterns'][0]
-        ax2.plot(range(1, len(pattern) + 1), pattern, 'o-', linewidth=3, markersize=8, color='#A23B72')
+        # If pattern is a list of position lists per step, convert to counts
+        if pattern and isinstance(pattern[0], list):
+            pattern_counts = [len(step_positions) for step_positions in pattern]
+        else:
+            pattern_counts = pattern
+        ax2.plot(range(1, len(pattern_counts) + 1), pattern_counts, 'o-', linewidth=3, markersize=8, color='#A23B72')
         ax2.set_title('🔄 Revision Pattern Over Time', fontsize=14, fontweight='bold')
         ax2.set_xlabel('Refinement Step')
         ax2.set_ylabel('Tokens Overwritten')

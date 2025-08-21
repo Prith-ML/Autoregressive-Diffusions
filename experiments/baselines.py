@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import time
 
 class L2RBaseline:
@@ -12,7 +12,28 @@ class L2RBaseline:
         self.name = "L2R Baseline"
         self.description = "Standard left-to-right generation, no revision"
     
-    def generate(self, prompt_tokens: torch.Tensor, max_length: int = 50) -> Tuple[torch.Tensor, Dict]:
+    def _sample_token(self, logits: torch.Tensor, top_k: int = 50, top_p: float = 0.9, temperature: float = 0.7, greedy: bool = False) -> torch.Tensor:
+        if greedy:
+            return torch.argmax(logits, dim=-1, keepdim=True)
+        logits = logits / max(1e-6, temperature)
+        if top_k is not None and top_k > 0:
+            top_k = min(top_k, logits.shape[-1])
+            kth_vals, _ = torch.topk(logits, k=top_k, dim=-1)
+            thresh = kth_vals[..., -1, None]
+            logits = torch.where(logits < thresh, torch.full_like(logits, float('-inf')), logits)
+        if top_p is not None and 0.0 < top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+            cumprobs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+            cutoff = cumprobs > top_p
+            cutoff[..., 1:] = cutoff[..., :-1].clone()
+            cutoff[..., 0] = False
+            sorted_logits = torch.where(cutoff, torch.full_like(sorted_logits, float('-inf')), sorted_logits)
+            logits = torch.full_like(logits, float('-inf'))
+            logits.scatter_(dim=-1, index=sorted_indices, src=sorted_logits)
+        probs = F.softmax(logits, dim=-1)
+        return torch.multinomial(probs, 1)
+
+    def generate(self, prompt_tokens: torch.Tensor, max_length: int = 50, eos_token_id: Optional[int] = None) -> Tuple[torch.Tensor, Dict]:
         """Generate text left-to-right without any revision"""
         start_time = time.time()
         
@@ -23,7 +44,22 @@ class L2RBaseline:
         for i in range(max_length - len(prompt_tokens[0])):
             with torch.no_grad():
                 # Get model predictions
-                if hasattr(self.model, 'forward'):
+                if hasattr(self.model, 'set_encoder_inputs') and hasattr(self.model, 'seq2seq') and hasattr(self.model, '_last_source_input_ids'):
+                    # Use summarization-friendly generate() if available (seq2seq path)
+                    gen_out = self.model.seq2seq.generate(
+                        input_ids=self.model._last_source_input_ids,
+                        attention_mask=self.model._last_source_attention_mask,
+                        max_length=max_length,
+                        min_length=max(10, max_length // 2),
+                        no_repeat_ngram_size=3,
+                        num_beams=4,
+                        length_penalty=2.0,
+                        early_stopping=True
+                    )
+                    # Replace current_tokens with the full generated sequence and stop
+                    current_tokens = gen_out
+                    break
+                elif hasattr(self.model, 'forward'):
                     # Your ARDM model
                     logits, _, _ = self.model(current_tokens)
                 else:
@@ -32,8 +68,7 @@ class L2RBaseline:
                 
                 # Get next token
                 next_token_logits = logits[0, -1, :]
-                next_token_probs = F.softmax(next_token_logits, dim=-1)
-                next_token = torch.multinomial(next_token_probs, 1)
+                next_token = self._sample_token(next_token_logits, top_k=50, top_p=0.9, temperature=0.7)
                 
                 # Add to sequence
                 if next_token.dim() == 1:
@@ -42,6 +77,9 @@ class L2RBaseline:
                 # Safely convert to item
                 token_value = int(next_token.cpu().detach().numpy())
                 generated_tokens.append(token_value)
+                # EOS-aware stopping
+                if eos_token_id is not None and token_value == int(eos_token_id):
+                    break
         
         generation_time = time.time() - start_time
         
@@ -76,7 +114,7 @@ class FixedScheduleBaseline:
     
     def __init__(self, model, T: int = 10):
         self.model = model
-        self.T = T
+        self.T = 2 if hasattr(model, 'set_encoder_inputs') else T
         self.name = "Fixed Schedule"
         self.description = "Position-only refinement schedule, no uncertainty"
     
@@ -97,7 +135,7 @@ class FixedScheduleBaseline:
         
         return schedule
     
-    def generate_with_refinement(self, prompt_tokens: torch.Tensor, max_length: int = 50) -> Tuple[torch.Tensor, Dict]:
+    def generate_with_refinement(self, prompt_tokens: torch.Tensor, max_length: int = 50, eos_token_id: Optional[int] = None) -> Tuple[torch.Tensor, Dict]:
         """Generate with fixed positional refinement schedule"""
         start_time = time.time()
         
@@ -111,11 +149,12 @@ class FixedScheduleBaseline:
                     logits = self.model(current_tokens)
                 
                 next_token_logits = logits[0, -1, :]
-                next_token_probs = F.softmax(next_token_logits, dim=-1)
-                next_token = torch.multinomial(next_token_probs, 1)
+                next_token = L2RBaseline._sample_token(self, next_token_logits, top_k=50, top_p=0.9, temperature=0.7)
                 if next_token.dim() == 1:
                     next_token = next_token.unsqueeze(0)
                 current_tokens = torch.cat([current_tokens, next_token], dim=1)
+                if eos_token_id is not None and int(next_token.cpu().detach().numpy()) == int(eos_token_id):
+                    break
         
         # Now apply fixed refinement schedule
         revision_steps = 0
@@ -145,11 +184,13 @@ class FixedScheduleBaseline:
                     if len(masked_positions) > 0:
                         # Get logits for each masked position
                         for pos in masked_positions:
-                            pos_logits = logits[0, pos, :]  # [vocab_size]
-                            pos_probs = F.softmax(pos_logits, dim=-1)
-                            new_token = torch.multinomial(pos_probs, 1)
-                            
-                            # Update token at this position
+                            # Recompute logits per update for stability
+                            if hasattr(self.model, 'forward'):
+                                logits, _, _ = self.model(current_tokens)
+                            else:
+                                logits = self.model(current_tokens)
+                            pos_logits = logits[0, pos, :]
+                            new_token = L2RBaseline._sample_token(self, pos_logits, top_k=50, top_p=0.9, temperature=0.7)
                             current_tokens[0, pos] = new_token
                         
                         revision_steps += 1
@@ -205,24 +246,48 @@ class DynamicGateBaseline:
     
     def __init__(self, model, T: int = 10):
         self.model = model
-        self.T = T
+        # Reduce refinement steps for seq2seq to stabilize outputs
+        self.T = 6 if hasattr(model, 'set_encoder_inputs') else T
         self.name = "Dynamic Gate (Ours)"
         self.description = "Uncertainty-driven + positional schedule via noisy-OR"
+        # Disable early stopping by default for seq2seq denoisers so refinement actually runs
+        self.disable_early_stop = hasattr(model, 'set_encoder_inputs')
+        # NEW: Deterministic masking + schedules
+        self.use_topk_mask = True  # prefer budgeted top-k selection over Bernoulli
+        # Edit budget schedule (fraction of tokens). Decays over steps
+        self.budget_start = 0.30
+        self.budget_end = 0.05
+        # Threshold schedule if not using top-k. Increases over steps
+        self.theta_start = 0.10
+        self.theta_end = 0.30
+        # Hysteresis to reduce flip-flops (applies to thresholding)
+        self.use_hysteresis = True
+        self.theta_off_delta = 0.05  # keep selected if p > theta_t - delta
+        # Prefer handcrafted uncertainty gate over untrained model gate outputs
+        self.force_handcrafted_gate = True
     
-    def _compute_uncertainty_signals(self, logits: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Compute the three uncertainty signals"""
+    def _compute_uncertainty_signals(self, logits: torch.Tensor, prev_logits: torch.Tensor = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute entropy, margin, and confidence change (vs previous step if provided)"""
         # Entropy
         log_probs = F.log_softmax(logits, dim=-1)
         probs = torch.exp(log_probs)
         entropy = -(probs * log_probs).sum(dim=-1)
-        
+
         # Margin (top1 - top2)
-        top2_values, _ = torch.topk(logits, k=2, dim=-1)
+        top2_values, top2_indices = torch.topk(logits, k=2, dim=-1)
         margin = top2_values[..., 0] - top2_values[..., 1]
-        
-        # Confidence change (placeholder - would need previous step)
-        confidence_change = torch.zeros_like(entropy)
-        
+
+        # Confidence change: Δ log p(y*), y* = current top-1 token per position
+        if prev_logits is not None:
+            prev_log_probs = F.log_softmax(prev_logits, dim=-1)
+            top1_indices = torch.argmax(logits, dim=-1)  # [B, L]
+            # Gather current and previous log-prob for the same y*
+            current_logp = log_probs.gather(dim=-1, index=top1_indices.unsqueeze(-1)).squeeze(-1)
+            prev_logp = prev_log_probs.gather(dim=-1, index=top1_indices.unsqueeze(-1)).squeeze(-1)
+            confidence_change = current_logp - prev_logp
+        else:
+            confidence_change = torch.zeros_like(entropy)
+
         return entropy, margin, confidence_change
     
     def _get_positional_schedule(self, seq_len: int, step: int) -> torch.Tensor:
@@ -274,28 +339,44 @@ class DynamicGateBaseline:
         # Noisy-OR combination: p = 1 - (1-u)(1-r)
         overwrite_prob = 1.0 - (1.0 - uncertainty_gate) * (1.0 - schedule)
         
-        # Clamp to reasonable range
-        return overwrite_prob.clamp(0.01, 0.20)  # Max 20% total revision probability (was 0.35)
+        # Note: final clamping is applied per-step in the main loop to allow annealing
+        return overwrite_prob
     
-    def generate_with_dynamic_refinement(self, prompt_tokens: torch.Tensor, max_length: int = 50) -> Tuple[torch.Tensor, Dict]:
+    def generate_with_dynamic_refinement(self, prompt_tokens: torch.Tensor, max_length: int = 50, eos_token_id: Optional[int] = None) -> Tuple[torch.Tensor, Dict]:
         """Generate with dynamic uncertainty-driven refinement"""
         start_time = time.time()
         
         # Initial generation
-        current_tokens = prompt_tokens.clone()
-        for i in range(max_length - len(prompt_tokens[0])):
+        # For seq2seq, start from high-quality beam search output using HF generate
+        if hasattr(self.model, 'set_encoder_inputs') and hasattr(self.model, 'seq2seq'):
             with torch.no_grad():
-                if hasattr(self.model, 'forward'):
-                    logits, _, _ = self.model(current_tokens)
-                else:
-                    logits = self.model(current_tokens)
-                
-                next_token_logits = logits[0, -1, :]
-                next_token_probs = F.softmax(next_token_logits, dim=-1)
-                next_token = torch.multinomial(next_token_probs, 1)
-                if next_token.dim() == 1:
-                    next_token = next_token.unsqueeze(0)
-                current_tokens = torch.cat([current_tokens, next_token], dim=1)
+                gen_out = self.model.seq2seq.generate(
+                    input_ids=self.model._last_source_input_ids,
+                    attention_mask=self.model._last_source_attention_mask,
+                    max_length=max_length,
+                    min_length=max(10, max_length // 2),
+                    no_repeat_ngram_size=3,
+                    num_beams=4,
+                    length_penalty=2.0,
+                    early_stopping=True
+                )
+            current_tokens = gen_out
+        else:
+            current_tokens = prompt_tokens.clone()
+            for i in range(max_length - len(prompt_tokens[0])):
+                with torch.no_grad():
+                    if hasattr(self.model, 'forward'):
+                        logits, _, _ = self.model(current_tokens)
+                    else:
+                        logits = self.model(current_tokens)
+                    next_token_logits = logits[0, -1, :]
+                    next_token_probs = F.softmax(next_token_logits, dim=-1)
+                    next_token = torch.multinomial(next_token_probs, 1)
+                    if next_token.dim() == 1:
+                        next_token = next_token.unsqueeze(0)
+                    current_tokens = torch.cat([current_tokens, next_token], dim=1)
+                    if eos_token_id is not None and int(next_token.cpu().detach().numpy()) == int(eos_token_id):
+                        break
         
         # Apply dynamic refinement with comprehensive logging
         revision_steps = 0
@@ -307,35 +388,156 @@ class DynamicGateBaseline:
         uncertainty_scores_per_step = []
         nfe_per_step = []
         
+        # Keep previous mask for hysteresis
+        # Initialize one-step cooldown (prevents re-editing same token in consecutive steps)
+        cooldown = torch.zeros(current_tokens.shape[1], dtype=torch.int64, device=current_tokens.device)
+        prev_mask = None
         for step in range(1, self.T + 1):
             with torch.no_grad():
-                if hasattr(self.model, 'forward'):
-                    logits, _, _ = self.model(current_tokens)
+                # 1) Forward pass: support models that return (logits, overwrite_probs, hidden)
+                outputs = self.model(current_tokens)
+                if isinstance(outputs, tuple) and len(outputs) >= 2:
+                    logits = outputs[0]
+                    model_overwrite_probs = outputs[1]  # [B, L]
                 else:
-                    logits = self.model(current_tokens)
-                
-                # Compute uncertainty signals
-                entropy, margin, confidence_change = self._compute_uncertainty_signals(logits)
-                
-                # Get positional schedule
+                    logits = outputs
+                    model_overwrite_probs = None
+
+                # 2) Compute uncertainty signals for logging/optional fallback
+                entropy, margin, confidence_change = self._compute_uncertainty_signals(logits, prev_logits=prev_logits)
+
+                # 3) Positional prior for this step
                 schedule = self._get_positional_schedule(len(current_tokens[0]), step)
                 
                 # Debug: Show positional probabilities for first few steps
                 if step <= 3:
                     print(f"🔍 Step {step} - Positional probs: {schedule[:5].tolist()}...")
                 
-                # Compute dynamic overwrite probability
-                overwrite_prob = self._compute_dynamic_overwrite_prob(
-                    entropy, margin, confidence_change, schedule
-                )
+                # 4) Compute overwrite probability
+                # Prefer handcrafted uncertainty gate unless explicitly allowed
+                use_model_gate = (model_overwrite_probs is not None) and (not self.force_handcrafted_gate)
+                if use_model_gate:
+                    # Use the model's gate u and combine with prior r via noisy-OR: p = 1 - (1-u)(1-r)
+                    u = model_overwrite_probs[0]
+                    r = schedule.to(u.device)                       # [L]
+                    overwrite_prob = 1.0 - (1.0 - u) * (1.0 - r)
+                else:
+                    # Handcrafted uncertainty-based gate
+                    overwrite_prob = self._compute_dynamic_overwrite_prob(
+                        entropy, margin, confidence_change, schedule
+                    )
+                
+                # Per-step clamp/anneal: allow higher p early, taper later
+                is_seq2seq = hasattr(self.model, 'set_encoder_inputs')
+                if is_seq2seq:
+                    max_start, max_end = 0.15, 0.05
+                    min_start, min_end = 0.01, 0.005
+                else:
+                    max_start, max_end = 0.25, 0.10
+                    min_start, min_end = 0.01, 0.005
+                # Linear schedules over steps
+                frac = (step - 1) / max(1, self.T - 1)
+                max_p = max_start + (max_end - max_start) * frac
+                min_p = min_start + (min_end - min_start) * frac
+                overwrite_prob = overwrite_prob.clamp(min_p, max_p)
+                # Ensure shape [L] (handcrafted path returns [1, L])
+                if overwrite_prob.dim() == 2 and overwrite_prob.size(0) == 1:
+                    overwrite_prob = overwrite_prob.squeeze(0)
                 
                 # Early stopping: if uncertainty is very low, stop refining
-                if entropy.mean() < 2.0 and margin.mean() > 2.0:  # More lenient thresholds
-                    print(f"🛑 Early stopping at step {step}: low uncertainty detected")
-                    break
+                if not getattr(self, 'disable_early_stop', False):
+                    if entropy.mean() < 2.0 and margin.mean() > 2.0:  # More lenient thresholds
+                        print(f"🛑 Early stopping at step {step}: low uncertainty detected")
+                        break
                 
-                # Decide which tokens to revise
-                revision_mask = torch.bernoulli(overwrite_prob).unsqueeze(0)  # [1, L]
+                # Decide which tokens to revise (deterministic mask)
+                L = overwrite_prob.shape[-1]
+                # Editable region: focus on the last third of tokens for seq2seq stability
+                if hasattr(self.model, 'set_encoder_inputs'):
+                    editable = torch.zeros(L, dtype=torch.bool, device=overwrite_prob.device)
+                    start_idx = max(1, int(2 * L / 3))
+                    editable[start_idx:] = True
+                    # Exclude EOS/PAD if present
+                    try:
+                        pad_id = getattr(self.model, 'pad_token_id', None)
+                        eos_id = getattr(self.model, 'eos_token_id', None)
+                        if pad_id is not None or eos_id is not None:
+                            token_ids = current_tokens[0]
+                            special_mask = torch.zeros(L, dtype=torch.bool, device=overwrite_prob.device)
+                            if pad_id is not None:
+                                special_mask |= (token_ids == int(pad_id))
+                            if eos_id is not None:
+                                special_mask |= (token_ids == int(eos_id))
+                            editable = editable & (~special_mask)
+                    except Exception:
+                        pass
+                    # Zero out p for non-editable positions before selection
+                    p_eff = overwrite_prob.clone()
+                    p_eff[~editable] = -1.0  # ensures not selected by top-k/threshold
+
+                    # Eligibility: high entropy (>=75th pct), low margin (<=25th pct), and (if available) negative confidence change
+                    eligible = None
+                    try:
+                        e = entropy[0].detach()
+                        m = margin[0].detach()
+                        c = None
+                        if 'confidence_change' in locals() or 'confidence_change' in globals():
+                            try:
+                                c = confidence_change[0].detach()
+                            except Exception:
+                                c = None
+                        if editable.any():
+                            e_edit = e[editable]
+                            m_edit = m[editable]
+                            e_thr = torch.quantile(e_edit, 0.80)
+                            m_thr = torch.quantile(m_edit, 0.20)
+                            eligible = torch.zeros(L, dtype=torch.bool, device=overwrite_prob.device)
+                            eligible_base = (e[editable] >= e_thr) & (m[editable] <= m_thr)
+                            if c is not None and prev_logits is not None:
+                                eligible_tail = eligible_base & (c[editable] < 0)
+                            else:
+                                eligible_tail = eligible_base
+                            eligible[editable] = eligible_tail
+                            # Mask out non-eligible positions
+                            p_eff[~eligible] = -1.0
+                    except Exception:
+                        eligible = None
+                else:
+                    p_eff = overwrite_prob
+                if self.use_topk_mask:
+                    # Budgeted top-k with decaying fraction
+                    rho_t = self.budget_start + (self.budget_end - self.budget_start) * frac
+                    # Reduce budget for seq2seq stability
+                    if hasattr(self.model, 'set_encoder_inputs'):
+                        rho_t = max(0.02, min(0.06, rho_t))
+                    k_t = max(1, int((rho_t * L)))
+                    # Exclude special case: if probs are very low, k_t may be too aggressive; fallback to threshold
+                    # Select top-k indices per sequence (batch assumed 1 here)
+                    topk_vals, topk_idx = torch.topk(p_eff, k_t, dim=-1)
+                    revision_mask = torch.zeros(1, L, dtype=torch.bool, device=overwrite_prob.device)
+                    revision_mask[0, topk_idx] = True
+                else:
+                    # Thresholding with optional hysteresis
+                    theta_t = self.theta_start + (self.theta_end - self.theta_start) * frac
+                    select_on = (p_eff > theta_t)
+                    if self.use_hysteresis and prev_mask is not None:
+                        theta_off = max(0.0, theta_t - self.theta_off_delta)
+                        select_off = (p_eff > theta_off) & prev_mask[0]
+                        current = select_on | select_off
+                    else:
+                        current = select_on
+                    revision_mask = current.unsqueeze(0)
+                
+                # Apply cooldown: prevent re-editing tokens changed in previous step
+                if cooldown is not None and cooldown.numel() == L:
+                    # Zero out positions with cooldown > 0
+                    if revision_mask.sum() > 0:
+                        active = revision_mask[0]
+                        active[cooldown > 0] = False
+                        revision_mask[0] = active
+
+                # Keep prev_mask for hysteresis next step
+                prev_mask = revision_mask.clone()
                 
                 # 🎯 LOGGING: Record step-wise metrics
                 num_tokens_overwritten = int(revision_mask.sum().cpu().detach().numpy())
@@ -355,6 +557,7 @@ class DynamicGateBaseline:
                 step_uncertainty = {
                     'entropy_mean': float(entropy.mean().cpu().detach().numpy()),
                     'margin_mean': float(margin.mean().cpu().detach().numpy()),
+                    'confidence_change_mean': float(confidence_change.mean().cpu().detach().numpy()),
                     'overwrite_prob_mean': float(overwrite_prob.mean().cpu().detach().numpy()),
                     'overwrite_prob_std': float(overwrite_prob.std().cpu().detach().numpy())
                 }
@@ -364,6 +567,7 @@ class DynamicGateBaseline:
                 nfe_per_step.append(1)  # Each refinement step = 1 NFE
                 
                 # Only revise if mask says so
+                accepted_edits = 0
                 if revision_mask.sum() > 0:
                     # Sample new tokens for masked positions
                     # Create a proper mask for indexing
@@ -371,19 +575,83 @@ class DynamicGateBaseline:
                     
                     # Get logits for masked positions - fix the indexing
                     # We need to get logits for each masked position
-                    masked_positions = torch.where(mask_2d[0])[0]  # Get actual positions
+                    masked_positions = torch.where(mask_2d[0])[0]
+                    # Span edits: include neighbors if eligible
+                    if eligible is not None and masked_positions.numel() > 0:
+                        expanded = set(int(p.item()) for p in masked_positions)
+                        for p in masked_positions:
+                            pi = int(p.item())
+                            for q in [pi - 1, pi + 1]:
+                                if 0 <= q < L and eligible[q]:
+                                    expanded.add(q)
+                        masked_positions = torch.tensor(sorted(list(expanded)), device=mask_2d.device, dtype=torch.long)
                     
                     if len(masked_positions) > 0:
                         # Get logits for each masked position
                         for pos in masked_positions:
-                            pos_logits = logits[0, pos, :]  # [vocab_size]
-                            pos_probs = F.softmax(pos_logits, dim=-1)
-                            new_token = torch.multinomial(pos_probs, 1)
-                            
-                            # Update token at this position
-                            current_tokens[0, pos] = new_token
+                            # Recompute logits per update for stability
+                            outputs = self.model(current_tokens)
+                            if isinstance(outputs, tuple) and len(outputs) >= 1:
+                                logits = outputs[0]
+                            else:
+                                logits = outputs
+                            pos_logits = logits[0, pos, :]
+                            # Greedy for seq2seq stability, else use sampling utility
+                            if hasattr(self.model, 'set_encoder_inputs'):
+                                # Get top-2 candidates
+                                top2_vals, top2_idx = torch.topk(pos_logits, k=2, dim=-1)
+                                new_id = int(top2_idx[0].cpu().detach().numpy())
+                                current_id = int(current_tokens[0, pos].cpu().detach().numpy())
+                                # Local repetition guard
+                                repeats_neighbor = (
+                                    (pos > 0 and int(current_tokens[0, pos - 1].cpu().detach().numpy()) == new_id) or
+                                    (pos + 1 < L and int(current_tokens[0, pos + 1].cpu().detach().numpy()) == new_id)
+                                )
+                                # If repeats, try second-best candidate
+                                if repeats_neighbor and top2_idx.numel() > 1:
+                                    alt_id = int(top2_idx[1].cpu().detach().numpy())
+                                    new_id = alt_id
+                                    repeats_neighbor = (
+                                        (pos > 0 and int(current_tokens[0, pos - 1].cpu().detach().numpy()) == new_id) or
+                                        (pos + 1 < L and int(current_tokens[0, pos + 1].cpu().detach().numpy()) == new_id)
+                                    )
+                                if repeats_neighbor:
+                                    continue
+                                if new_id != current_id:
+                                    # Acceptance test: require significant probability improvement
+                                    pos_probs = F.softmax(pos_logits, dim=-1)
+                                    pos_log_probs = F.log_softmax(pos_logits, dim=-1)
+                                    p_new = float(pos_probs[new_id].cpu().detach().numpy())
+                                    p_old = float(pos_probs[current_id].cpu().detach().numpy())
+                                    lp_new = float(pos_log_probs[new_id].cpu().detach().numpy())
+                                    lp_old = float(pos_log_probs[current_id].cpu().detach().numpy())
+                                    min_ratio = 1.30
+                                    min_delta = 0.10
+                                    no_regress = (lp_new - lp_old) >= 0.0
+                                    if no_regress and ((p_new >= p_old * min_ratio) or (p_new - p_old >= min_delta)):
+                                        current_tokens[0, pos] = torch.tensor([new_id], dtype=torch.long, device=pos_logits.device)
+                                        # Set one-step cooldown
+                                        if cooldown is not None and cooldown.numel() == L:
+                                            cooldown[pos] = 1
+                                        accepted_edits += 1
+                                    # else: skip edit
+                                # else: no change if same id
+                            else:
+                                new_token = L2RBaseline._sample_token(self, pos_logits, top_k=50, top_p=0.9, temperature=0.7)
+                                # Apply only if different
+                                if int(new_token.cpu().detach().numpy()) != int(current_tokens[0, pos].cpu().detach().numpy()):
+                                    current_tokens[0, pos] = new_token
+                                    accepted_edits += 1
                         
                         revision_steps += 1
+
+                # Decrement cooldown (one-step)
+                if cooldown is not None and cooldown.numel() == L:
+                    cooldown = torch.clamp(cooldown - 1, min=0)
+
+                # Early stop if no edits were accepted this step
+                if accepted_edits == 0:
+                    break
                 
                 prev_logits = logits.detach()
         
@@ -512,7 +780,15 @@ class DynamicGateBaseline:
         coherence = 1.0 / (1.0 + weighted_revisions / total_revisions)
         return coherence
 
-def run_baseline_comparison(model, prompt_tokens: torch.Tensor, max_length: int = 50) -> Dict:
+def run_baseline_comparison(
+    model,
+    prompt_tokens: torch.Tensor,
+    max_length: int = 50,
+    tokenizer=None,
+    text_prompts: Optional[List[str]] = None,
+    prompt_max_tokens: int = 16,
+    references: Optional[List[str]] = None,
+) -> Dict:
     """Run comparison between all three baselines"""
     print("🔬 RUNNING BASELINE COMPARISON EXPERIMENT")
     print("=" * 60)
@@ -523,12 +799,15 @@ def run_baseline_comparison(model, prompt_tokens: torch.Tensor, max_length: int 
     dynamic_gate = DynamicGateBaseline(model)
     
     # Test prompts
-    test_prompts = [
-        "The detective",
-        "She was investigating",
-        "The mystery deepened",
-        "Inside the old house"
-    ]
+    if text_prompts is not None and len(text_prompts) > 0:
+        test_prompts = text_prompts
+    else:
+        test_prompts = [
+            "The detective",
+            "She was investigating",
+            "The mystery deepened",
+            "Inside the old house"
+        ]
     
     results = {
         'l2r': {'times': [], 'revisions': [], 'quality_scores': []},
@@ -540,14 +819,59 @@ def run_baseline_comparison(model, prompt_tokens: torch.Tensor, max_length: int 
         print(f"\n📝 Test {i+1}: '{prompt}'")
         print("-" * 40)
         
-        # Convert prompt to tokens (simplified)
-        prompt_tokens = torch.tensor([[hash(word) % 1000 for word in prompt.split()]], dtype=torch.long)
+        # Convert prompt to tokens
+        if tokenizer is not None and text_prompts is not None:
+            if hasattr(model, 'set_encoder_inputs'):
+                # Seq2Seq flow: set encoder with source, decode iteratively on decoder side
+                enc = tokenizer(
+                    prompt,
+                    truncation=True,
+                    max_length=prompt_max_tokens,
+                    add_special_tokens=True,
+                    return_tensors='pt'
+                )
+                model.set_encoder_inputs(enc['input_ids'], enc.get('attention_mask'))
+                # Start decoder with BOS if available, else a single pad token
+                start_id = getattr(model, 'decoder_start_token_id', None)
+                if start_id is None:
+                    start_id = tokenizer.bos_token_id if tokenizer.bos_token_id is not None else tokenizer.eos_token_id
+                prompt_tokens = torch.tensor([[int(start_id)]], dtype=torch.long)
+            else:
+                enc = tokenizer(
+                    prompt,
+                    truncation=True,
+                    max_length=prompt_max_tokens,
+                    add_special_tokens=False,
+                    return_tensors='pt'
+                )
+                input_ids = enc['input_ids']
+                prompt_tokens = input_ids[:, :prompt_max_tokens].to(torch.long)
+            if prompt_tokens.numel() == 0:
+                print("⚠️ Skipping empty tokenized prompt")
+                continue
+        else:
+            # Fallback toy tokenization
+            prompt_tokens = torch.tensor([[hash(word) % 1000 for word in prompt.split()]], dtype=torch.long)
         
+        # Determine EOS id if available
+        eos_id = None
+        if hasattr(model, 'eos_token_id') and getattr(model, 'eos_token_id') is not None:
+            eos_id = int(getattr(model, 'eos_token_id'))
+        elif tokenizer is not None and getattr(tokenizer, 'eos_token_id', None) is not None:
+            eos_id = int(tokenizer.eos_token_id)
+
         # Test L2R
         print(f"🚀 Testing {l2r.name}...")
-        l2r_tokens, l2r_metrics = l2r.generate(prompt_tokens, max_length)
+        l2r_tokens, l2r_metrics = l2r.generate(prompt_tokens, max_length, eos_token_id=eos_id)
         results['l2r']['times'].append(l2r_metrics['generation_time'])
         results['l2r']['revisions'].append(l2r_metrics['revision_steps'])
+        if tokenizer is not None:
+            try:
+                results['l2r'].setdefault('pred_texts', []).append(
+                    tokenizer.decode(l2r_tokens[0].tolist(), skip_special_tokens=True)
+                )
+            except Exception:
+                pass
         
         # Store detailed metrics for L2R
         if 'diversity_score' in l2r_metrics:
@@ -562,9 +886,16 @@ def run_baseline_comparison(model, prompt_tokens: torch.Tensor, max_length: int 
         
         # Test Fixed Schedule
         print(f"🔄 Testing {fixed_schedule.name}...")
-        fixed_tokens, fixed_metrics = fixed_schedule.generate_with_refinement(prompt_tokens, max_length)
+        fixed_tokens, fixed_metrics = fixed_schedule.generate_with_refinement(prompt_tokens, max_length, eos_token_id=eos_id)
         results['fixed_schedule']['times'].append(fixed_metrics['generation_time'])
         results['fixed_schedule']['revisions'].append(fixed_metrics['revision_steps'])
+        if tokenizer is not None:
+            try:
+                results['fixed_schedule'].setdefault('pred_texts', []).append(
+                    tokenizer.decode(fixed_tokens[0].tolist(), skip_special_tokens=True)
+                )
+            except Exception:
+                pass
         
         # Store detailed metrics for Fixed Schedule
         if 'diversity_score' in fixed_metrics:
@@ -579,9 +910,16 @@ def run_baseline_comparison(model, prompt_tokens: torch.Tensor, max_length: int 
         
         # Test Dynamic Gate
         print(f"🎯 Testing {dynamic_gate.name}...")
-        dynamic_tokens, dynamic_metrics = dynamic_gate.generate_with_dynamic_refinement(prompt_tokens, max_length)
+        dynamic_tokens, dynamic_metrics = dynamic_gate.generate_with_dynamic_refinement(prompt_tokens, max_length, eos_token_id=eos_id)
         results['dynamic_gate']['times'].append(dynamic_metrics['generation_time'])
         results['dynamic_gate']['revisions'].append(dynamic_metrics['revision_steps'])
+        if tokenizer is not None:
+            try:
+                results['dynamic_gate'].setdefault('pred_texts', []).append(
+                    tokenizer.decode(dynamic_tokens[0].tolist(), skip_special_tokens=True)
+                )
+            except Exception:
+                pass
         
         # Store detailed metrics for Dynamic Gate
         if 'diversity_score' in dynamic_metrics:
@@ -600,15 +938,28 @@ def run_baseline_comparison(model, prompt_tokens: torch.Tensor, max_length: int 
                 results['dynamic_gate']['quality_vs_nfe_data'] = []
             results['dynamic_gate']['quality_vs_nfe_data'].append(dynamic_metrics['quality_vs_nfe'])
         
-        if 'tokens_overwritten_per_step' in dynamic_metrics:
+        # Store per-step positions for heatmap (rename: use tokens_overwritten_patterns key)
+        if 'positional_overwrite_patterns' in dynamic_metrics:
             if 'tokens_overwritten_patterns' not in results['dynamic_gate']:
                 results['dynamic_gate']['tokens_overwritten_patterns'] = []
-            results['dynamic_gate']['tokens_overwritten_patterns'].append(dynamic_metrics['tokens_overwritten_per_step'])
+            results['dynamic_gate']['tokens_overwritten_patterns'].append(dynamic_metrics['positional_overwrite_patterns'])
+
+        # Optionally keep counts as well for other analyses
+        if 'tokens_overwritten_per_step' in dynamic_metrics:
+            if 'tokens_overwritten_counts' not in results['dynamic_gate']:
+                results['dynamic_gate']['tokens_overwritten_counts'] = []
+            results['dynamic_gate']['tokens_overwritten_counts'].append(dynamic_metrics['tokens_overwritten_per_step'])
         
         if 'positional_focus' in dynamic_metrics:
             if 'positional_focus_data' not in results['dynamic_gate']:
                 results['dynamic_gate']['positional_focus_data'] = []
             results['dynamic_gate']['positional_focus_data'].append(dynamic_metrics['positional_focus'])
+
+        # Store uncertainty scores per step for plotting
+        if 'uncertainty_scores_per_step' in dynamic_metrics:
+            if 'uncertainty_scores_per_step' not in results['dynamic_gate']:
+                results['dynamic_gate']['uncertainty_scores_per_step'] = []
+            results['dynamic_gate']['uncertainty_scores_per_step'].append(dynamic_metrics['uncertainty_scores_per_step'])
         
         print(f"✅ All baselines completed for prompt {i+1}")
     
@@ -617,6 +968,43 @@ def run_baseline_comparison(model, prompt_tokens: torch.Tensor, max_length: int 
         results[method]['avg_time'] = sum(results[method]['times']) / len(results[method]['times'])
         results[method]['avg_revisions'] = sum(results[method]['revisions']) / len(results[method]['revisions'])
     
+    # Optional: compute ROUGE/BLEU if references are provided and metric libs are available
+    if references is not None:
+        try:
+            from rouge_score import rouge_scorer
+        except ImportError:
+            rouge_scorer = None
+            print("⚠️ rouge-score not installed; skipping ROUGE.")
+        try:
+            import sacrebleu
+        except ImportError:
+            sacrebleu = None
+            print("⚠️ sacrebleu not installed; skipping BLEU.")
+
+        for method in ['l2r', 'fixed_schedule', 'dynamic_gate']:
+            preds = results[method].get('pred_texts', [])
+            if not preds or len(preds) != len(references):
+                continue
+
+            # Compute BLEU
+            if sacrebleu is not None:
+                bleu = sacrebleu.corpus_bleu(preds, [references])
+                results[method]['bleu'] = float(bleu.score)
+
+            # Compute ROUGE-1/2/L
+            if rouge_scorer is not None:
+                scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+                r1, r2, rl = 0.0, 0.0, 0.0
+                for p, r in zip(preds, references):
+                    scores = scorer.score(r, p)
+                    r1 += scores['rouge1'].fmeasure
+                    r2 += scores['rouge2'].fmeasure
+                    rl += scores['rougeL'].fmeasure
+                n = max(1, len(preds))
+                results[method]['rouge1'] = r1 / n
+                results[method]['rouge2'] = r2 / n
+                results[method]['rougeL'] = rl / n
+
     return results
 
 def print_comparison_results(results: Dict):
@@ -692,7 +1080,12 @@ def print_comparison_results(results: Dict):
             if dynamic_data['tokens_overwritten_patterns']:
                 first_pattern = dynamic_data['tokens_overwritten_patterns'][0]
                 print(f"   • Example pattern: {first_pattern}")
-                print(f"   • Total tokens overwritten: {sum(first_pattern)}")
+                # Handle nested lists (per-step positions) vs flat counts
+                if first_pattern and isinstance(first_pattern[0], list):
+                    total_overwritten = sum(len(step_positions) for step_positions in first_pattern)
+                else:
+                    total_overwritten = sum(first_pattern)
+                print(f"   • Total tokens overwritten: {total_overwritten}")
         
         if 'positional_focus_data' in dynamic_data:
             print(f"\n📍 POSITIONAL FOCUS ANALYSIS:")

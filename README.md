@@ -91,33 +91,6 @@ To learn $u_i^{(t)}$ end-to-end, use a relaxed Bernoulli (Gumbel-Sigmoid) or a s
 - **Stability**: temporal smoothness of $p$ across steps (total variation penalty)
 - **Optional auxiliary signal** during teacher forcing: encourage overwriting when the current prediction is wrong
 
-## 3. Implementation Status
-
-### 3.1 ✅ **Core Architecture Implemented**
-- **Dynamic Overwrite Gate**: Full uncertainty-driven revision mechanism
-- **Uncertainty Signals**: Entropy, margin, and confidence change calculations
-- **Positional Prior**: AR-DIFFUSION style maturity scheduling
-- **Noisy-OR Combination**: Smart blending of uncertainty and positional factors
-
-### 3.2 ✅ **Baseline Comparison Framework**
-- **L2R Baseline**: Standard left-to-right generation (no revision)
-- **Fixed Schedule Baseline**: Position-only refinement (AR-DIFFUSION style)
-- **Dynamic Gate Baseline**: Your uncertainty-driven approach
-- **Evaluation Protocol**: Systematic comparison across multiple test prompts
-
-### 3.3 ✅ **Comprehensive Metrics & Logging**
-- **NFE Tracking**: Number of function evaluations per method
-- **Quality vs NFE Curves**: Quality improvement with computational budget
-- **Tokens Overwritten per Step**: Detailed revision patterns
-- **Positional Focus Analysis**: Early/middle/late position distribution
-- **Efficiency Metrics**: Time per revision, overall efficiency scores
-
-### 3.4 ✅ **Research Validation & Tuning**
-- **Parameter Optimization**: Multiple rounds of tuning positional schedules and uncertainty gates
-- **Performance Analysis**: Competitive speed with better quality
-- **Efficiency Gains**: 67% reduction in unnecessary token revisions
-- **Selective Refinement**: Only revising tokens that actually need it
-
 ## 4. Current Results
 
 ### 4.1 **Performance Comparison**
@@ -211,8 +184,99 @@ python experiments/plot_results.py
 3. **Selective Refinement**: Intelligent token revision based on uncertainty
 4. **Research Validation**: Clear evidence of competitive advantages over baselines
 
----
 
-**Status**: 🚀 **RESEARCH VALIDATED & IMPLEMENTED** - Core innovation working, competitive advantages demonstrated, comprehensive evaluation framework ready, professional visualizations generated. Ready for scaling to full datasets and advanced features.
 
-**Last Updated**: Current implementation reflects successful research validation with measurable improvements over baselines.
+## 8. Technical Appendix (Formalism and Objectives)
+
+### 8.1 Problem setup
+
+Let sequence length be \(L\) and diffusion (refinement) steps \(t \in \{1,\dots,T\}\). At step \(t\), we maintain a discrete sequence \(x^{(t)} \in \mathcal{V}^L\). A denoiser \(f_\theta\) (e.g., BART decoder with encoder context) produces per-token logits and hidden states
+\[
+\quad (z^{(t)}, h^{(t)}) = f_\theta\big(x^{(t-1)},\; t\big),\quad z^{(t)} \in \mathbb{R}^{L\times |\mathcal{V}|},\; h^{(t)} \in \mathbb{R}^{L\times d}.
+\]
+We define probabilities \(q^{(t)} = \mathrm{softmax}\big(z^{(t)}/\tau_{\text{logit}}\big)\) with calibration temperature \(\tau_{\text{logit}}>0\).
+
+### 8.2 Uncertainty features and positional prior
+
+For each position \(i\):
+\[
+\begin{aligned}
+\text{Entropy:}\quad & H^{(t)}_i = -\sum_{y\in \mathcal{V}} q^{(t)}_{i}(y)\, \log q^{(t)}_{i}(y) \\
+\text{Margin:}\quad & M^{(t)}_i = z^{(t)}_{i,y^{(1)}} - z^{(t)}_{i,y^{(2)}},\; y^{(1)}=\arg\max_y z^{(t)}_{i,y} \\
+\text{Confidence drift:}\quad & \Delta \ell^{(t)}_i = \log q^{(t)}_{i}(\hat y_i) - \log q^{(t-1)}_{i}(\hat y_i),\; \hat y_i=\arg\max_y q^{(t-1)}_{i}(y)
+\end{aligned}
+\]
+We z-score each signal over the batch or a running window to stabilize scales. The positional maturity prior follows a logistic schedule:
+\[
+\tau(i) = \frac{T}{L}\,(i+\delta),\quad r^{(t)}_i = \sigma\big(\alpha\,(\tau(i)-t)\big)\in(0,1),
+\]
+where \(\alpha>0\) controls sharpness and \(\delta\) shifts the maturity curve.
+
+### 8.3 Gate and fusion (Noisy-OR)
+
+We concatenate features \(\phi^{(t)}_i = [h^{(t)}_i; \tilde H^{(t)}_i; \tilde M^{(t)}_i; \widetilde{\Delta \ell}^{(t)}_i; i/L; t/T; r^{(t)}_i]\), and compute an uncertainty-driven score
+\[
+u^{(t)}_i = \sigma\big( \mathrm{MLP}_\varphi(\phi^{(t)}_i) \big)\in(0,1)\quad\text{or}\quad u^{(t)}_i = \sigma(w^\top \phi^{(t)}_i + b).
+\]
+We then fuse uncertainty \(u\) and prior \(r\) with a Noisy-OR:
+\[
+\boxed{\; p^{(t)}_i = 1 - (1-u^{(t)}_i)(1-r^{(t)}_i) = u^{(t)}_i + r^{(t)}_i - u^{(t)}_i r^{(t)}_i\;}
+\]
+so that either factor can trigger an edit while avoiding double counting.
+
+### 8.4 Selection, acceptance, and early stopping
+
+- Deterministic selection (budgeted top-k or percentile threshold):
+\[
+\mathcal{I}^{(t)} = \text{Top\text{-}k}\big(p^{(t)},\; k_t=\lceil \rho_t L\rceil\big)\quad\text{or}\quad \{i: p^{(t)}_i \ge \theta_t\},
+\]
+with schedules \(\rho_t\downarrow\), \(\theta_t\uparrow\).
+- Acceptance test (no-regression): propose new token \(y^{\text{new}}_i = \arg\max_y z^{(t)}_{i,y}\) and commit only if
+\[
+\log q^{(t)}_i(y^{\text{new}}_i) - \log q^{(t)}_i(x^{(t-1)}_i) \ge 0\quad\text{and}\quad q^{(t)}_i(y^{\text{new}}_i) \ge \max\big(\lambda\, q^{(t)}_i(x^{(t-1)}_i),\; q^{(t)}_i(x^{(t-1)}_i)+\delta_p\big),
+\]
+with \(\lambda>1\), \(\delta_p>0\) (e.g., \(\lambda{=}1.2\), \(\delta_p{=}0.10\)). Add local n-gram/neighbor repetition guards and a top-2 fallback.
+- Early stop: terminate if no edits are accepted in a step, or \(\max_i p^{(t)}_i < \theta_{\text{stop}}\).
+
+### 8.5 Training objectives
+
+End-to-end objective over final step \(T\):
+\[
+\mathcal{L}_{\text{seq}} = \mathrm{CE}\big(x^{(T)},\; x^{\ast}\big)
+\quad+\quad \lambda_{\text{sparse}}\,\mathbb{E}[m]\quad+\quad \lambda_{\text{tv}}\sum_i |p^{(t)}_i - p^{(t-1)}_i|,
+\]
+with straight-through or relaxed Bernoulli (Gumbel–Sigmoid) for mask gradients. A supervised proxy for the gate during teacher forcing is also possible:
+\[
+\mathcal{L}_{\text{gate}} = \mathrm{BCE}\big(u^{(t)}_i,\; \mathbb{1}[\arg\max_y q^{(t)}_i(y) \ne x^{\ast}_i]\big).
+\]
+
+### 8.6 Complexity
+
+Each refinement step costs one forward pass of the denoiser: \(\mathcal{O}(B\,L\,|\mathcal{V}|)\). The gate adds \(\mathcal{O}(B\,L\,d)\) with a small constant. Early stop and small edit budgets bound the effective number of steps and edited positions.
+
+### 8.7 Metrics and measurement protocol
+
+- Quality: BLEU and ROUGE (tokenized with the same tokenizer as decoding); we report parity with L2R on a small CNN/DailyMail slice (BLEU \(\approx\) 6.5, ROUGE-1 \(\approx\) 0.30).
+- Compute: end-to-end latency per sample (p50/p95), number of edits per step and per sample, and fraction of runs hitting early stop; we observed a runtime reduction of ~23% after adding early-stop and tighter budgets.
+- Robustness: failure rate (collapsed outputs), repetition artifacts (n-gram repeats), and coherence proxy (later-step revision weighting).
+
+### 8.8 Algorithm (refinement loop)
+
+```
+for t in 1..T:
+  z, h = f_theta(x, t)
+  q = softmax(z / tau)
+  H, M, dlog = entropy(q), margin(z), conf_change(q, q_prev)
+  r = sigma(alpha*(T/L*(i+delta) - t))
+  u = sigmoid(MLP([h, zscore(H), zscore(M), zscore(dlog), i/L, t/T, r]))
+  p = 1 - (1 - u) * (1 - r)
+  I = select_topk_or_threshold(p; rho_t, theta_t, editable_tail)
+  accepted = 0
+  for i in I:
+      y_new = argmax(z[i])  # or top-2 fallback
+      if no_regression_and_thresholds(q[i], x[i], y_new): x[i] = y_new; accepted += 1
+  if accepted == 0: break
+  q_prev = q
+```
+
+These additions formalize the gating, selection, and acceptance rules used in our implementation and make the evaluation protocol explicit for reproducibility.
