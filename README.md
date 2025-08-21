@@ -227,7 +227,7 @@ so that either factor can trigger an edit while avoiding double counting.
 $$\log q^{(t)}_i\big(y^{\text{new}}_i\big) - \log q^{(t)}_i\big(x^{(t-1)}_i\big) \ge 0\quad\text{and}\quad q^{(t)}_i\big(y^{\text{new}}_i\big) \ge \max\Big(\lambda\, q^{(t)}_i\big(x^{(t-1)}_i\big),\; q^{(t)}_i\big(x^{(t-1)}_i\big)+\delta_p\Big)$$
 
 with $\lambda>1$, $\delta_p>0$ (e.g., $\lambda=1.2$, $\delta_p=0.10$). Add local n-gram/neighbor repetition guards and a top-2 fallback.
-- Early stop: terminate if no edits are accepted in a step, or $\max_i p^{(t)}_i < \theta_{\text{stop}}$.
+- **Early stop**: terminate if no edits are accepted in a step, or $\max_i p^{(t)}_i < \theta_{\text{stop}}$.
 
 ### 8.5 Training objectives
 
@@ -253,21 +253,33 @@ Each refinement step costs one forward pass of the denoiser: $\mathcal{O}(B\,L\,
 
 ### 8.8 Algorithm (refinement loop)
 
-```
+```python
 for t in 1..T:
-  z, h = f_theta(x, t)
-  q = softmax(z / tau)
-  H, M, dlog = entropy(q), margin(z), conf_change(q, q_prev)
-  r = sigma(alpha*(T/L*(i+delta) - t))
-  u = sigmoid(MLP([h, zscore(H), zscore(M), zscore(dlog), i/L, t/T, r]))
-  p = 1 - (1 - u) * (1 - r)
-  I = select_topk_or_threshold(p; rho_t, theta_t, editable_tail)
-  accepted = 0
-  for i in I:
-      y_new = argmax(z[i])  # or top-2 fallback
-      if no_regression_and_thresholds(q[i], x[i], y_new): x[i] = y_new; accepted += 1
-  if accepted == 0: break
-  q_prev = q
+    z, h = f_theta(x, t)
+    q = softmax(z / tau)
+    H, M, dlog = entropy(q), margin(z), conf_change(q, q_prev)
+    r = sigma(alpha*(T/L*(i+delta) - t))
+    u = sigmoid(MLP([h, zscore(H), zscore(M), zscore(dlog), i/L, t/T, r]))
+    p = 1 - (1 - u) * (1 - r)
+    I = select_topk_or_threshold(p; rho_t, theta_t, editable_tail)
+    accepted = 0
+    for i in I:
+        y_new = argmax(z[i])  # or top-2 fallback
+        if no_regression_and_thresholds(q[i], x[i], y_new): 
+            x[i] = y_new; accepted += 1
+    if accepted == 0: break
+    q_prev = q
 ```
 
 These additions formalize the gating, selection, and acceptance rules used in our implementation and make the evaluation protocol explicit for reproducibility.
+
+## 9. Conclusion
+
+This research demonstrates that **Dynamic Overwrite Gates** can significantly improve the efficiency and quality of Autoregressive Diffusion Models. By selectively revising only uncertain tokens based on learned uncertainty signals and positional maturity priors, our approach achieves:
+
+- **Quality parity** with L2R generation while enabling principled backtracking
+- **Computational efficiency** through targeted refinement and early stopping
+- **Robust performance** with deterministic masking and acceptance criteria
+- **Reproducible evaluation** through comprehensive metrics and diagnostics
+
+The technical appendix provides the mathematical foundation for future extensions, including learned gate architectures, adaptive scheduling, and integration with larger language models.
