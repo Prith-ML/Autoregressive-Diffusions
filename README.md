@@ -23,7 +23,7 @@ Sequence length $n$; diffusion steps $t = 1, \ldots, T$.
 
 Denoiser at step $t$ outputs logits $z^{(t)} \in \mathbb{R}^{n \times |V|}$ and hidden states $h^{(t)} \in \mathbb{R}^{n \times d}$.
 
-Softmax distribution $q_i^{(t)} = \text{softmax}(z_i^{(t)})$.
+Softmax distribution $q_i^{(t)} = \mathrm{softmax}(z_i^{(t)})$.
 
 ### 2.2 Uncertainty signals
 
@@ -33,7 +33,7 @@ We compute three per-token signals:
 $$H_i^{(t)} = -\sum_y q_i^{(t)}(y) \log q_i^{(t)}(y)$$
 
 **Margin:**
-$$M_i^{(t)} = z_{i,y^{(1)}}^{(t)} - z_{i,y^{(2)}}^{(t)} \quad (\text{top1--top2})$$
+$$M_i^{(t)} = z_{i,y^{(1)}}^{(t)} - z_{i,y^{(2)}}^{(t)} \quad (\mathrm{top1\text{-}top2})$$
 
 **Confidence change:**
 $$\Delta\ell_i^{(t)} = \log q_i^{(t)}(\tilde{y}_i) - \log q_i^{(t-1)}(\tilde{y}_i)$$
@@ -62,7 +62,7 @@ where $u_i^{(t)}$ is an uncertainty-driven gate.
 $$u_i^{(t)} = \sigma(\beta_0 + \beta_H \tilde{H}_i^{(t)} - \beta_M \tilde{M}_i^{(t)} - \beta_{\Delta} \tilde{\Delta\ell}_i^{(t)})$$
 
 **Learned gate (recommended):**
-$$u_i^{(t)} = \sigma(\text{MLP}_\phi([h_i^{(t)}; \tilde{H}_i^{(t)}; \tilde{M}_i^{(t)}; \tilde{\Delta\ell}_i^{(t)}; i/n; t/T; r_i^{(t)}]))$$
+$$u_i^{(t)} = \sigma(\mathrm{MLP}_\phi([h_i^{(t)}; \tilde{H}_i^{(t)}; \tilde{M}_i^{(t)}; \tilde{\Delta\ell}_i^{(t)}; i/n; t/T; r_i^{(t)}]))$$
 
 ### 2.5 Sampling with the gate
 
@@ -70,7 +70,7 @@ At step $t$:
 
 1. Denoiser $\rightarrow (z^{(t)}, h^{(t)})$
 2. Compute $p_i^{(t)}$ for all tokens
-3. Sample mask $m_i^{(t)} \sim \text{Bernoulli}(p_i^{(t)})$ (or use thresholding)
+3. Sample mask $m_i^{(t)} \sim \mathrm{Bernoulli}(p_i^{(t)})$ (or use thresholding)
 4. Overwrite tokens where $m_i^{(t)} = 1$; keep/freeze others
 
 **Pseudocode:**
@@ -87,7 +87,7 @@ for t in range(1, T+1):
 
 To learn $u_i^{(t)}$ end-to-end, use a relaxed Bernoulli (Gumbel-Sigmoid) or a straight-through estimator; add:
 
-- **Sparsity**: encourage fewer rewrites, $\lambda_{\text{sparse}} \cdot \mathbb{E}[m]$
+- **Sparsity**: encourage fewer rewrites, $\lambda_{\mathrm{sparse}} \cdot \mathbb{E}[m]$
 - **Stability**: temporal smoothness of $p$ across steps (total variation penalty)
 - **Optional auxiliary signal** during teacher forcing: encourage overwriting when the current prediction is wrong
 
@@ -192,7 +192,7 @@ python experiments/plot_results.py
 
 Let sequence length be $L$ and diffusion (refinement) steps $t \in \{1,\dots,T\}$. At step $t$, we maintain a discrete sequence $x^{(t)} \in \mathcal{V}^L$. A denoiser $f_\theta$ (e.g., BART decoder with encoder context) produces per-token logits and hidden states
 $$(z^{(t)}, h^{(t)}) = f_\theta\big(x^{(t-1)},\; t\big),\quad z^{(t)} \in \mathbb{R}^{L\times |\mathcal{V}|},\; h^{(t)} \in \mathbb{R}^{L\times d}.$$
-We define probabilities $q^{(t)} = \mathrm{softmax}\big(z^{(t)}/\tau_{\text{logit}}\big)$ with calibration temperature $\tau_{\text{logit}}>0$.
+We define probabilities $q^{(t)} = \mathrm{softmax}\big(z^{(t)}/\tau_{\mathrm{logit}}\big)$ with calibration temperature $\tau_{\mathrm{logit}}>0$.
 
 ### 8.2 Uncertainty features and positional prior
 
@@ -220,24 +220,24 @@ so that either factor can trigger an edit while avoiding double counting.
 
 ### 8.4 Selection, acceptance, and early stopping
 
-- **Deterministic selection** (budgeted top-k or percentile threshold): $$\mathcal{I}^{(t)} = \text{Top-k}\big(p^{(t)},\; k_t=\lceil \rho_t L\rceil\big)\quad\text{or}\quad \{i: p^{(t)}_i \ge \theta_t\}$$ with schedules $\rho_t\downarrow$, $\theta_t\uparrow$.
+- **Deterministic selection** (budgeted top-k or percentile threshold): $$\mathcal{I}^{(t)} = \mathrm{Top\text{-}k}\big(p^{(t)},\; k_t=\lceil \rho_t L\rceil\big)\quad\text{or}\quad \{i: p^{(t)}_i \ge \theta_t\}$$ with schedules $\rho_t\downarrow$, $\theta_t\uparrow$.
 
-- **Acceptance test** (no-regression): propose new token $y^{\text{new}}_i = \arg\max_y z^{(t)}_{i,y}$ and commit only if:
+- **Acceptance test** (no-regression): propose new token $y^{\mathrm{new}}_i = \arg\max_y z^{(t)}_{i,y}$ and commit only if:
 
-$$\log q^{(t)}_i\big(y^{\text{new}}_i\big) - \log q^{(t)}_i\big(x^{(t-1)}_i\big) \ge 0\quad\text{and}\quad q^{(t)}_i\big(y^{\text{new}}_i\big) \ge \max\Big(\lambda\, q^{(t)}_i\big(x^{(t-1)}_i\big),\; q^{(t)}_i\big(x^{(t-1)}_i\big)+\delta_p\Big)$$
+$$\log q^{(t)}_i\big(y^{\mathrm{new}}_i\big) - \log q^{(t)}_i\big(x^{(t-1)}_i\big) \ge 0\quad\text{and}\quad q^{(t)}_i\big(y^{\mathrm{new}}_i\big) \ge \max\Big(\lambda\, q^{(t)}_i\big(x^{(t-1)}_i\big),\; q^{(t)}_i\big(x^{(t-1)}_i\big)+\delta_p\Big)$$
 
 with $\lambda>1$, $\delta_p>0$ (e.g., $\lambda=1.2$, $\delta_p=0.10$). Add local n-gram/neighbor repetition guards and a top-2 fallback.
-- **Early stop**: terminate if no edits are accepted in a step, or $\max_i p^{(t)}_i < \theta_{\text{stop}}$.
+- **Early stop**: terminate if no edits are accepted in a step, or $\max_i p^{(t)}_i < \theta_{\mathrm{stop}}$.
 
 ### 8.5 Training objectives
 
 **End-to-end objective** over final step $T$:
 
-$$\mathcal{L}_{\text{seq}} = \mathrm{CE}\big(x^{(T)},\; x^{\ast}\big) + \lambda_{\text{sparse}}\,\mathbb{E}[m] + \lambda_{\text{tv}}\sum_i |p^{(t)}_i - p^{(t-1)}_i|$$
+$$\mathcal{L}_{\mathrm{seq}} = \mathrm{CE}\big(x^{(T)},\; x^{\ast}\big) + \lambda_{\mathrm{sparse}}\,\mathbb{E}[m] + \lambda_{\mathrm{tv}}\sum_i |p^{(t)}_i - p^{(t-1)}_i|$$
 
 with straight-through or relaxed Bernoulli (Gumbel–Sigmoid) for mask gradients. A **supervised proxy** for the gate during teacher forcing is also possible:
 
-$$\mathcal{L}_{\text{gate}} = \mathrm{BCE}\big(u^{(t)}_i,\; \mathbb{1}[\arg\max_y q^{(t)}_i(y) \ne x^{\ast}_i]\big)$$
+$$\mathcal{L}_{\mathrm{gate}} = \mathrm{BCE}\big(u^{(t)}_i,\; \mathbb{1}[\arg\max_y q^{(t)}_i(y) \ne x^{\ast}_i]\big)$$
 
 ### 8.6 Complexity
 
