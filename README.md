@@ -204,13 +204,13 @@ For each position $i$:
 
 **Confidence change:** $$\Delta \ell^{(t)}_i = \log q^{(t)}_{i}(\hat y_i) - \log q^{(t-1)}_{i}(\hat y_i),\quad \hat y_i=\arg\max_y q^{(t-1)}_{i}(y)$$
 
-We z-score each signal over the batch or a running window to stabilize scales. The positional maturity prior follows a logistic schedule: $$\tau(i) = \frac{T}{L}\,(i+\delta),\quad r^{(t)}_i = \sigma\big(\alpha\,(\tau(i)-t)\big)\in(0,1)$$ where $\alpha>0$ controls sharpness and $\delta$ shifts the maturity curve.
+We z-score each signal over the batch or a running window to stabilize scales. The positional maturity prior follows a logistic schedule: $$\tau(i) = \frac{T}{L}\,(i+\delta),\quad r^{(t)}_i = \sigma\big(\alpha\,(\tau(i)-t)\big) \in (0,1)$$ where $\alpha>0$ controls sharpness and $\delta$ shifts the maturity curve.
 
 ### 8.3 Gate and fusion (Noisy-OR)
 
 We concatenate features $\phi^{(t)}_i = [h^{(t)}_i; \tilde H^{(t)}_i; \tilde M^{(t)}_i; \widetilde{\Delta \ell}^{(t)}_i; i/L; t/T; r^{(t)}_i]$, and compute an uncertainty-driven score:
 
-$$u^{(t)}_i = \sigma\big( \mathrm{MLP}_\varphi(\phi^{(t)}_i) \big)\in(0,1)\quad\text{or}\quad u^{(t)}_i = \sigma(w^\top \phi^{(t)}_i + b)$$
+$$u^{(t)}_i = \sigma\big( \mathrm{MLP}_\varphi(\phi^{(t)}_i) \big) \in (0,1)\quad\text{or}\quad u^{(t)}_i = \sigma(w^\top \phi^{(t)}_i + b)$$
 
 We then fuse uncertainty $u$ and prior $r$ with a Noisy-OR:
 
@@ -220,7 +220,7 @@ so that either factor can trigger an edit while avoiding double counting.
 
 ### 8.4 Selection, acceptance, and early stopping
 
-- **Deterministic selection** (budgeted top-k or percentile threshold): $$\mathcal{I}^{(t)} = \text{Top\text{-}k}\big(p^{(t)},\; k_t=\lceil \rho_t L\rceil\big)\quad\text{or}\quad \{i: p^{(t)}_i \ge \theta_t\}$$ with schedules $\rho_t\downarrow$, $\theta_t\uparrow$.
+- **Deterministic selection** (budgeted top-k or percentile threshold): $$\mathcal{I}^{(t)} = \text{Top-k}\big(p^{(t)},\; k_t=\lceil \rho_t L\rceil\big)\quad\text{or}\quad \{i: p^{(t)}_i \ge \theta_t\}$$ with schedules $\rho_t\downarrow$, $\theta_t\uparrow$.
 
 - **Acceptance test** (no-regression): propose new token $y^{\text{new}}_i = \arg\max_y z^{(t)}_{i,y}$ and commit only if:
 
