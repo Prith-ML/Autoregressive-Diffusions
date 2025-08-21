@@ -202,9 +202,7 @@ For each position $i$:
 
 Entropy:
 
-$$
-H^{(t)}_i = -\sum_{y\in \mathcal{V}} q^{(t)}_{i}(y)\, \log q^{(t)}_{i}(y)
-$$
+$$H^{(t)}_i = -\sum_{y\in \mathcal{V}} q^{(t)}_{i}(y)\, \log q^{(t)}_{i}(y)$$
 
 Margin (top1–top2):
 
@@ -218,9 +216,7 @@ $$
 \Delta \ell^{(t)}_i = \log q^{(t)}_{i}(\hat y_i) - \log q^{(t-1)}_{i}(\hat y_i),\quad \hat y_i=\arg\max_y q^{(t-1)}_{i}(y)
 $$
 We z-score each signal over the batch or a running window to stabilize scales. The positional maturity prior follows a logistic schedule:
-$$
-\tau(i) = \frac{T}{L}\,(i+\delta),\quad r^{(t)}_i = \sigma\big(\alpha\,(\tau(i)-t)\big)\in(0,1),
-$$
+$$ \tau(i) = \frac{T}{L}\,(i+\delta),\quad r^{(t)}_i = \sigma\big(\alpha\,(\tau(i)-t)\big)\in(0,1) $$
 where $\alpha>0$ controls sharpness and $\delta$ shifts the maturity curve.
 
 ### 8.3 Gate and fusion (Noisy-OR)
