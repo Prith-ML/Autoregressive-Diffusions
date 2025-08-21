@@ -191,73 +191,38 @@ python experiments/plot_results.py
 ### 8.1 Problem setup
 
 Let sequence length be $L$ and diffusion (refinement) steps $t \in \{1,\dots,T\}$. At step $t$, we maintain a discrete sequence $x^{(t)} \in \mathcal{V}^L$. A denoiser $f_\theta$ (e.g., BART decoder with encoder context) produces per-token logits and hidden states
-$$
-\quad (z^{(t)}, h^{(t)}) = f_\theta\big(x^{(t-1)},\; t\big),\quad z^{(t)} \in \mathbb{R}^{L\times |\mathcal{V}|},\; h^{(t)} \in \mathbb{R}^{L\times d}.
-$$
+$$(z^{(t)}, h^{(t)}) = f_\theta\big(x^{(t-1)},\; t\big),\quad z^{(t)} \in \mathbb{R}^{L\times |\mathcal{V}|},\; h^{(t)} \in \mathbb{R}^{L\times d}.$$
 We define probabilities $q^{(t)} = \mathrm{softmax}\big(z^{(t)}/\tau_{\text{logit}}\big)$ with calibration temperature $\tau_{\text{logit}}>0$.
 
 ### 8.2 Uncertainty features and positional prior
 
 For each position $i$:
 
-Entropy:
+Entropy: $$H^{(t)}_i = -\sum_{y\in \mathcal{V}} q^{(t)}_{i}(y)\, \log q^{(t)}_{i}(y)$$
 
-$$H^{(t)}_i = -\sum_{y\in \mathcal{V}} q^{(t)}_{i}(y)\, \log q^{(t)}_{i}(y)$$
+Margin (top1–top2): $$M^{(t)}_i = z^{(t)}_{i,y^{(1)}} - z^{(t)}_{i,y^{(2)}},\quad y^{(1)}=\arg\max_y z^{(t)}_{i,y}$$
 
-Margin (top1–top2):
+Confidence change: $$\Delta \ell^{(t)}_i = \log q^{(t)}_{i}(\hat y_i) - \log q^{(t-1)}_{i}(\hat y_i),\quad \hat y_i=\arg\max_y q^{(t-1)}_{i}(y)$$
 
-$$
-M^{(t)}_i = z^{(t)}_{i,y^{(1)}} - z^{(t)}_{i,y^{(2)}},\quad y^{(1)}=\arg\max_y z^{(t)}_{i,y}
-$$
-
-Confidence change:
-
-$$
-\Delta \ell^{(t)}_i = \log q^{(t)}_{i}(\hat y_i) - \log q^{(t-1)}_{i}(\hat y_i),\quad \hat y_i=\arg\max_y q^{(t-1)}_{i}(y)
-$$
 We z-score each signal over the batch or a running window to stabilize scales. The positional maturity prior follows a logistic schedule:
-$$ \tau(i) = \frac{T}{L}\,(i+\delta),\quad r^{(t)}_i = \sigma\big(\alpha\,(\tau(i)-t)\big)\in(0,1) $$
+$$\tau(i) = \frac{T}{L}\,(i+\delta),\quad r^{(t)}_i = \sigma\big(\alpha\,(\tau(i)-t)\big)\in(0,1)$$
 where $\alpha>0$ controls sharpness and $\delta$ shifts the maturity curve.
 
 ### 8.3 Gate and fusion (Noisy-OR)
 
-We concatenate features $\phi^{(t)}_i = [h^{(t)}_i; \tilde H^{(t)}_i; \tilde M^{(t)}_i; \widetilde{\Delta \ell}^{(t)}_i; i/L; t/T; r^{(t)}_i]$, and compute an uncertainty-driven score
-$$
-u^{(t)}_i = \sigma\big( \mathrm{MLP}_\varphi(\phi^{(t)}_i) \big)\in(0,1)\quad\text{or}\quad u^{(t)}_i = \sigma(w^\top \phi^{(t)}_i + b).
-$$
-We then fuse uncertainty $u$ and prior $r$ with a Noisy-OR:
-
-$$
-p^{(t)}_i = 1 - (1-u^{(t)}_i)(1-r^{(t)}_i) = u^{(t)}_i + r^{(t)}_i - u^{(t)}_i r^{(t)}_i
-$$
+We concatenate features $\phi^{(t)}_i = [h^{(t)}_i; \tilde H^{(t)}_i; \tilde M^{(t)}_i; \widetilde{\Delta \ell}^{(t)}_i; i/L; t/T; r^{(t)}_i]$, and compute an uncertainty-driven score $$u^{(t)}_i = \sigma\big( \mathrm{MLP}_\varphi(\phi^{(t)}_i) \big)\in(0,1)\quad\text{or}\quad u^{(t)}_i = \sigma(w^\top \phi^{(t)}_i + b).$$ We then fuse uncertainty $u$ and prior $r$ with a Noisy-OR: $$p^{(t)}_i = 1 - (1-u^{(t)}_i)(1-r^{(t)}_i) = u^{(t)}_i + r^{(t)}_i - u^{(t)}_i r^{(t)}_i$$
 so that either factor can trigger an edit while avoiding double counting.
 
 ### 8.4 Selection, acceptance, and early stopping
 
-- Deterministic selection (budgeted top-k or percentile threshold):
-$$
-\mathcal{I}^{(t)} = \text{Top\text{-}k}\big(p^{(t)},\; k_t=\lceil \rho_t L\rceil\big)\quad\text{or}\quad \{i: p^{(t)}_i \ge \theta_t\},
-$$
-with schedules $\rho_t\downarrow$, $\theta_t\uparrow$.
-- Acceptance test (no-regression): propose new token $y^{\text{new}}_i = \arg\max_y z^{(t)}_{i,y}$ and commit only if
-
-$$
-\log q^{(t)}_i\big(y^{\text{new}}_i\big) - \log q^{(t)}_i\big(x^{(t-1)}_i\big) \ge 0\quad\text{and}\quad q^{(t)}_i\big(y^{\text{new}}_i\big) \ge \max\Big(\lambda\, q^{(t)}_i\big(x^{(t-1)}_i\big),\; q^{(t)}_i\big(x^{(t-1)}_i\big)+\delta_p\Big)
-$$
+- Deterministic selection (budgeted top-k or percentile threshold): $$\mathcal{I}^{(t)} = \text{Top\text{-}k}\big(p^{(t)},\; k_t=\lceil \rho_t L\rceil\big)\quad\text{or}\quad \{i: p^{(t)}_i \ge \theta_t\},$$ with schedules $\rho_t\downarrow$, $\theta_t\uparrow$.
+- Acceptance test (no-regression): propose new token $y^{\text{new}}_i = \arg\max_y z^{(t)}_{i,y}$ and commit only if $$\log q^{(t)}_i\big(y^{\text{new}}_i\big) - \log q^{(t)}_i\big(x^{(t-1)}_i\big) \ge 0\quad\text{and}\quad q^{(t)}_i\big(y^{\text{new}}_i\big) \ge \max\Big(\lambda\, q^{(t)}_i\big(x^{(t-1)}_i\big),\; q^{(t)}_i\big(x^{(t-1)}_i\big)+\delta_p\Big)$$
 with $\lambda>1$, $\delta_p>0$ (e.g., $\lambda=1.2$, $\delta_p=0.10$). Add local n-gram/neighbor repetition guards and a top-2 fallback.
 - Early stop: terminate if no edits are accepted in a step, or $\max_i p^{(t)}_i < \theta_{\text{stop}}$.
 
 ### 8.5 Training objectives
 
-End-to-end objective over final step $T$:
-$$
-\mathcal{L}_{\text{seq}} = \mathrm{CE}\big(x^{(T)},\; x^{\ast}\big)
-\quad+\quad \lambda_{\text{sparse}}\,\mathbb{E}[m]\quad+\quad \lambda_{\text{tv}}\sum_i |p^{(t)}_i - p^{(t-1)}_i|,
-$$
-with straight-through or relaxed Bernoulli (Gumbel–Sigmoid) for mask gradients. A supervised proxy for the gate during teacher forcing is also possible:
-$$
-\mathcal{L}_{\text{gate}} = \mathrm{BCE}\big(u^{(t)}_i,\; \mathbb{1}[\arg\max_y q^{(t)}_i(y) \ne x^{\ast}_i]\big).
-$$
+End-to-end objective over final step $T$: $$\mathcal{L}_{\text{seq}} = \mathrm{CE}\big(x^{(T)},\; x^{\ast}\big) + \lambda_{\text{sparse}}\,\mathbb{E}[m] + \lambda_{\text{tv}}\sum_i |p^{(t)}_i - p^{(t-1)}_i|,$$ with straight-through or relaxed Bernoulli (Gumbel–Sigmoid) for mask gradients. A supervised proxy for the gate during teacher forcing is also possible: $$\mathcal{L}_{\text{gate}} = \mathrm{BCE}\big(u^{(t)}_i,\; \mathbb{1}[\arg\max_y q^{(t)}_i(y) \ne x^{\ast}_i]\big).$$
 
 ### 8.6 Complexity
 
