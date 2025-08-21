@@ -242,14 +242,14 @@ so that either factor can trigger an edit while avoiding double counting.
 $$
 \mathcal{I}^{(t)} = \text{Top\text{-}k}\big(p^{(t)},\; k_t=\lceil \rho_t L\rceil\big)\quad\text{or}\quad \{i: p^{(t)}_i \ge \theta_t\},
 $$
-with schedules \(\rho_t\downarrow\), \(\theta_t\uparrow\).
+with schedules $\rho_t\downarrow$, $\theta_t\uparrow$.
 - Acceptance test (no-regression): propose new token $y^{\text{new}}_i = \arg\max_y z^{(t)}_{i,y}$ and commit only if
 
 $$
 \log q^{(t)}_i\big(y^{\text{new}}_i\big) - \log q^{(t)}_i\big(x^{(t-1)}_i\big) \ge 0\quad\text{and}\quad q^{(t)}_i\big(y^{\text{new}}_i\big) \ge \max\Big(\lambda\, q^{(t)}_i\big(x^{(t-1)}_i\big),\; q^{(t)}_i\big(x^{(t-1)}_i\big)+\delta_p\Big)
 $$
-with \(\lambda>1\), \(\delta_p>0\) (e.g., \(\lambda{=}1.2\), \(\delta_p{=}0.10\)). Add local n-gram/neighbor repetition guards and a top-2 fallback.
-- Early stop: terminate if no edits are accepted in a step, or \(\max_i p^{(t)}_i < \theta_{\text{stop}}\).
+with $\lambda>1$, $\delta_p>0$ (e.g., $\lambda=1.2$, $\delta_p=0.10$). Add local n-gram/neighbor repetition guards and a top-2 fallback.
+- Early stop: terminate if no edits are accepted in a step, or $\max_i p^{(t)}_i < \theta_{\text{stop}}$.
 
 ### 8.5 Training objectives
 
