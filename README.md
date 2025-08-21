@@ -199,12 +199,23 @@ We define probabilities $q^{(t)} = \mathrm{softmax}\big(z^{(t)}/\tau_{\text{logi
 ### 8.2 Uncertainty features and positional prior
 
 For each position $i$:
+
+Entropy:
+
 $$
-\begin{aligned}
-\text{Entropy:}\quad & H^{(t)}_i = -\sum_{y\in \mathcal{V}} q^{(t)}_{i}(y)\, \log q^{(t)}_{i}(y) \\
-\text{Margin:}\quad & M^{(t)}_i = z^{(t)}_{i,y^{(1)}} - z^{(t)}_{i,y^{(2)}},\; y^{(1)}=\arg\max_y z^{(t)}_{i,y} \\
-\text{Confidence drift:}\quad & \Delta \ell^{(t)}_i = \log q^{(t)}_{i}(\hat y_i) - \log q^{(t-1)}_{i}(\hat y_i),\; \hat y_i=\arg\max_y q^{(t-1)}_{i}(y)
-\end{aligned}
+H^{(t)}_i = -\sum_{y\in \mathcal{V}} q^{(t)}_{i}(y)\, \log q^{(t)}_{i}(y)
+$$
+
+Margin (top1–top2):
+
+$$
+M^{(t)}_i = z^{(t)}_{i,y^{(1)}} - z^{(t)}_{i,y^{(2)}},\quad y^{(1)}=\arg\max_y z^{(t)}_{i,y}
+$$
+
+Confidence change:
+
+$$
+\Delta \ell^{(t)}_i = \log q^{(t)}_{i}(\hat y_i) - \log q^{(t-1)}_{i}(\hat y_i),\quad \hat y_i=\arg\max_y q^{(t-1)}_{i}(y)
 $$
 We z-score each signal over the batch or a running window to stabilize scales. The positional maturity prior follows a logistic schedule:
 $$
@@ -218,9 +229,10 @@ We concatenate features $\phi^{(t)}_i = [h^{(t)}_i; \tilde H^{(t)}_i; \tilde M^{
 $$
 u^{(t)}_i = \sigma\big( \mathrm{MLP}_\varphi(\phi^{(t)}_i) \big)\in(0,1)\quad\text{or}\quad u^{(t)}_i = \sigma(w^\top \phi^{(t)}_i + b).
 $$
-We then fuse uncertainty \(u\) and prior \(r\) with a Noisy-OR:
+We then fuse uncertainty $u$ and prior $r$ with a Noisy-OR:
+
 $$
-\boxed{\; p^{(t)}_i = 1 - (1-u^{(t)}_i)(1-r^{(t)}_i) = u^{(t)}_i + r^{(t)}_i - u^{(t)}_i r^{(t)}_i\;}
+p^{(t)}_i = 1 - (1-u^{(t)}_i)(1-r^{(t)}_i) = u^{(t)}_i + r^{(t)}_i - u^{(t)}_i r^{(t)}_i
 $$
 so that either factor can trigger an edit while avoiding double counting.
 
@@ -231,9 +243,10 @@ $$
 \mathcal{I}^{(t)} = \text{Top\text{-}k}\big(p^{(t)},\; k_t=\lceil \rho_t L\rceil\big)\quad\text{or}\quad \{i: p^{(t)}_i \ge \theta_t\},
 $$
 with schedules \(\rho_t\downarrow\), \(\theta_t\uparrow\).
-- Acceptance test (no-regression): propose new token \(y^{\text{new}}_i = \arg\max_y z^{(t)}_{i,y}\) and commit only if
+- Acceptance test (no-regression): propose new token $y^{\text{new}}_i = \arg\max_y z^{(t)}_{i,y}$ and commit only if
+
 $$
-\log q^{(t)}_i(y^{\text{new}}_i) - \log q^{(t)}_i(x^{(t-1)}_i) \ge 0\quad\text{and}\quad q^{(t)}_i(y^{\text{new}}_i) \ge \max\big(\lambda\, q^{(t)}_i(x^{(t-1)}_i),\; q^{(t)}_i(x^{(t-1)}_i)+\delta_p\big),
+\log q^{(t)}_i\big(y^{\text{new}}_i\big) - \log q^{(t)}_i\big(x^{(t-1)}_i\big) \ge 0\quad\text{and}\quad q^{(t)}_i\big(y^{\text{new}}_i\big) \ge \max\Big(\lambda\, q^{(t)}_i\big(x^{(t-1)}_i\big),\; q^{(t)}_i\big(x^{(t-1)}_i\big)+\delta_p\Big)
 $$
 with \(\lambda>1\), \(\delta_p>0\) (e.g., \(\lambda{=}1.2\), \(\delta_p{=}0.10\)). Add local n-gram/neighbor repetition guards and a top-2 fallback.
 - Early stop: terminate if no edits are accepted in a step, or \(\max_i p^{(t)}_i < \theta_{\text{stop}}\).
